@@ -125,7 +125,7 @@ void TrackRobot::track(const Trackable* robot, double time)
     if(conf.trackPos){
       Position p = robot->getPosition();
       fprintf(file, " %g %g %g", p.x, p.y, p.z);
-      std::cout<< "Position: " << p.x << " " << p.y << " " << p.z << std::endl;
+      // std::cout<< "Position: " << p.x << " " << p.y << " " << p.z << std::endl;
     }
     if(conf.trackSpeed){
       Position s = robot->getSpeed();

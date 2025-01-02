@@ -36,7 +36,7 @@ namespace lpzrobots {
         
         // Create quaternion that rotates from z-axis to target axis
         vsg::dquat rotation(vsg::dvec3(0.0, 0.0, 1.0), safeAxis);
-        return vsg::rotate(rotation) * vsg::translate(anchor);
+        return vsg::translate(anchor) * vsg::rotate(rotation);
     }
 
 

@@ -15,7 +15,10 @@
 // #include "humanoid_robot.h"
 // #include "robot.h"
 #include "nimm2.h"
-#include "sos.h"
+
+// #include "sos.h"
+#include "sox.h"
+
 #include "one2onewiring.h"
 #include "stl_adds.h"
 
@@ -24,6 +27,20 @@ using namespace lpzrobots;
 double plane_z = 0.0;
 GlobalData global;
 bool drawContacts = false;
+
+Plane* makePhysicsScene(OdeHandle& odeHandle, VsgHandle& vsgHandle){
+    // add ODE Ground here (physical plane)
+    dGeomID ground = dCreatePlane(odeHandle.space, 0 , 0 , 1 , plane_z);
+    dGeomSetCategoryBits(ground,Primitive::Stat);
+    dGeomSetCollideBits(ground,~Primitive::Stat);
+    // assign a dummy primitive to the ground plane to have substance (material) support
+    Plane* plane = new Plane();
+    plane->init(odeHandle, 0.0, vsgHandle, Primitive::Geom | Primitive::Draw);
+    plane->setPose(vsg::translate(0.0, 0.0, plane_z));
+    dGeomSetData(ground, (void*)plane);
+    //    std::cout << "GROUND: " << ground << std::endl;
+    return plane;
+}
 
 //------------------------------------------------------------------------
 // DEBUGGING FUNCTIONS
@@ -146,7 +163,7 @@ void nearCallback(void *data, dGeomID o1, dGeomID o2) {
     }
 
     // Print debug info
-    printGeomCollisionInfo(std::cerr, o1, o2, (OdeHandle*)data);
+    // printGeomCollisionInfo(std::cerr, o1, o2, (OdeHandle*)data);
 
     // Get primitive data safely
     Primitive* p1 = dynamic_cast<Primitive*>((Primitive*)dGeomGetData(o1));
@@ -274,52 +291,95 @@ struct agent_match_prefix {
 };
 
 
-OdeAgent* createLongVehicle(const OdeHandle& odeHandle, const VsgHandle& vsgHandle,
-                              GlobalData& global, vsg::dmat4 pose){
-    // find robot and do naming
-    std::string name("LongVehicle");
+OdeAgent* createVehicle(const OdeHandle& odeHandle, const VsgHandle& vsgHandle,
+                              GlobalData& global, vsg::dmat4 pose, int type){
+    Nimm2Conf nimm2conf = Nimm2::getDefaultConf();
+    std::string name;
+    switch(type){
+    case 0:
+        name = "CylinderVehicle";
+        break;
+    case 1:
+        name = "BoxVehicle";
+        nimm2conf.size = 1;
+        nimm2conf.force = 5;
+        nimm2conf.speed=20;
+        nimm2conf.singleMotor=false;
+        nimm2conf.boxMode=true;
+        nimm2conf.boxWidth=1.5;
+        break;
+    case 2:
+        name = "SphereVehicle";
+        nimm2conf.size = 1;
+        nimm2conf.force = 5;
+        nimm2conf.speed=20;
+        nimm2conf.singleMotor=false;
+        nimm2conf.sphereWheels=true;
+        nimm2conf.wheelSize=1;
+        nimm2conf.wheelOffset=-1.0; // disabled
+        nimm2conf.wheelSlip=0;
+        break;
+    default:
+        // find robot and do naming
+        name = "LongVehicle";
+        nimm2conf.size = 1;
+        nimm2conf.force = 5;
+        nimm2conf.speed=20;
+        //      nimm2conf.speed=15;
+        nimm2conf.cigarMode=true;
+        nimm2conf.cigarLength= 3.0;
+        nimm2conf.singleMotor=false;
+        nimm2conf.boxMode=true;
+        nimm2conf.boxWidth=1.5;
+        //      nimm2conf.visForce =true;
+        nimm2conf.bumper=true;
+    }
+
     int num = count_if(global.agents.begin(), global.agents.end(), agent_match_prefix(name));
     name += "_" + std::to_string(num+1);
-
-    Nimm2Conf nimm2conf = Nimm2::getDefaultConf();
-    nimm2conf.size = 1;
-    nimm2conf.force = 5;
-    nimm2conf.speed=20;
-    //      nimm2conf.speed=15;
-    nimm2conf.cigarMode=true;
-    nimm2conf.cigarLength= 3.0;
-    nimm2conf.singleMotor=false;
-    nimm2conf.boxMode=true;
-    nimm2conf.boxWidth=1.5;
-    //      nimm2conf.visForce =true;
-    nimm2conf.bumper=true;
-
     // OdeHandle odeHandleR = odeHandle;
     OdeRobot* robot = new Nimm2(odeHandle, vsgHandle, nimm2conf, name);
     robot->setColor(Color(.1,.1,.8));
     robot->place(pose);
-    AbstractController* controller = new Sos();
+    SoxConf sc = Sox::getDefaultConf();
+    // sc.steps4Averaging = 1;
+    AbstractController* controller = new Sox(sc);
+    controller->setParam("epsC",0.02);
+    controller->setParam("epsA",0.01);
+    // controller->setParam("harmony",0.0);
+    // controller->setParam("s4avg",5.0);
+    global.configs.push_back(controller);
     AbstractWiring* wiring = new One2OneWiring(new WhiteNormalNoise());
     OdeAgent* agent = new OdeAgent(global, PlotOption(NoPlot));
     agent->init(controller, robot, wiring);
+    //agent->startMotorBabblingMode(5000);
+    //agent->setTrackOptions(TrackRobot(true,true,false,true,"bodyheight",20)); // position and speed tracking every 20 steps
     global.agents.push_back(agent);
     global.configs.push_back(agent);
     return agent;
+    
 }
 
 void configureRobotPhysics(OdeHandle& odeHandle) {
-    dWorldSetGravity(odeHandle.world, 0.0, 0.0, -9.81);
-    dWorldSetERP(odeHandle.world, 0.8);
-    dWorldSetCFM(odeHandle.world, 1e-5);
-    // More iterations for stability
-    dWorldSetQuickStepNumIterations(odeHandle.world, 50);
+    //set Gravity to Earth level
+    dWorldSetGravity ( odeHandle.world , 0 , 0 , /*global.odeConfig.gravity*/ -9.81 );
+    dWorldSetERP ( odeHandle.world , 0.3 );
+    dWorldSetCFM ( odeHandle.world,1e-4);
+
+    dWorldSetContactMaxCorrectingVel (odeHandle.world, 100); // default is infinity
+    dWorldSetContactSurfaceLayer (odeHandle.world, 0.001); // default is 0
+
+    // // More iterations for stability
+    // dWorldSetQuickStepNumIterations(odeHandle.world, 50);
     
-    // Global damping
-    dWorldSetLinearDamping(odeHandle.world, 0.01);
-    dWorldSetAngularDamping(odeHandle.world, 0.01);
-    dWorldSetMaxAngularSpeed(odeHandle.world, 50.0);
-    
-    // Ground plane
+    // // Global damping
+    // dWorldSetLinearDamping(odeHandle.world, 0.01);
+    // dWorldSetAngularDamping(odeHandle.world, 0.01);
+    // dWorldSetMaxAngularSpeed(odeHandle.world, 50.0);
+}
+
+void createGroundPlane(OdeHandle& odeHandle) {
+    // Ground plane geometry for collision detection in ODE
     dGeomID ground = dCreatePlane(odeHandle.space, 0, 0, 1, -plane_z);
     dGeomSetCategoryBits(ground, 1);
     dGeomSetCollideBits(ground, 0xffffffff);
@@ -459,12 +519,47 @@ int main(int argc, char** argv)
         if (arguments.errors()) return arguments.writeErrorMessages(std::cerr);
 
         // Initialize ODE and VSG
+        /**************** ODE-Section   ***********************/
         OdeHandle odeHandle;
-        VsgHandle vsgHandle;
         double simulationTime = 0.0;
         odeHandle.init(&simulationTime);
+        global.odeConfig.setOdeHandle(odeHandle);
+        configureRobotPhysics(odeHandle);
+        // add ode config to config list
+        global.configs.push_back(&(global.odeConfig));
+        global.globalconfigurables.push_back(&(global.odeConfig));
+
+        /**************** VulkanSceneGraph-Section   ***********************/
+        VsgHandle vsgHandle;
         vsgHandle.init();
-        
+
+        // // Create ground plane
+        // auto ground = new Plane();
+        // ground->init(odeHandle, 0.0, vsgHandle, Primitive::Geom | Primitive::Draw);
+        // ground->setPose(vsg::translate(0.0, 0.0, plane_z));
+        // createGroundPlane(odeHandle);
+        auto plane = makePhysicsScene(odeHandle, vsgHandle);
+        vsgHandle.parent=vsgHandle.scene->scene;
+
+        // GlobalData global;
+        global.vsgHandle = vsgHandle;
+        auto agent = createVehicle(odeHandle, vsgHandle, global, 
+                    vsg::translate(0.0, 0.0, 1.0) * vsg::rotate(M_PI * 2.0, vsg::dvec3(0.0,1.0,0.0)), 2 /*SphereVehicle*/);
+        TrackRobotConf conf;
+        conf.trackPos              = true;
+        // conf.writeFile             = true;
+        // conf.trackSpeed            = true;
+        // conf.trackOrientation      = true;
+        // conf.displayTrace          = true;
+        // conf.displayTraceDur       = 60;
+        // conf.displayTraceThickness = 1.0;
+        conf.interval              = 1;
+        conf.writeFile             = true;
+        // createNewDir("./", (char*)agent->getRobot()->getName().c_str());
+        conf.scene = agent->getRobot()->getName() + "_track";
+        agent->setTrackOptions(conf);
+
+
         // Create robot
         // lpzrobots::HumanoidRobot humanoid;
         // humanoid.buildRobot(odeHandle, vsgHandle, true);
@@ -503,28 +598,6 @@ int main(int argc, char** argv)
         //     simulateStep(odeHandle, 0.01);
         //     robot->update();
         // }
-
-        // Create ground plane
-        auto ground = new Plane();
-        ground->init(odeHandle, 0.0, vsgHandle, Primitive::Geom | Primitive::Draw);
-        ground->setPose(vsg::translate(0.0, 0.0, plane_z));
-        configureRobotPhysics(odeHandle);
-        // GlobalData global;
-        global.vsgHandle = vsgHandle;
-        auto agent = createLongVehicle(odeHandle, vsgHandle, global, vsg::translate(0.0, 0.0, 1.0) * vsg::rotate(M_PI * 2.0, vsg::dvec3(0.0,1.0,0.0)));
-        TrackRobotConf conf;
-        conf.trackPos              = true;
-        // conf.writeFile             = true;
-        // conf.trackSpeed            = true;
-        // conf.trackOrientation      = true;
-        // conf.displayTrace          = true;
-        // conf.displayTraceDur       = 60;
-        // conf.displayTraceThickness = 1.0;
-        conf.interval              = 1;
-        conf.writeFile             = true;
-        // createNewDir("./", (char*)agent->getRobot()->getName().c_str());
-        conf.scene = agent->getRobot()->getName() + "_track";
-        agent->setTrackOptions(conf);
 
 
         vsg::ref_ptr<vsg::Node> vsg_scene;
@@ -586,12 +659,12 @@ int main(int argc, char** argv)
             viewer->handleEvents();
 
             try {
-                
+                //********************Simulation start********************************
                 // humanoid.update();
                 // // Update ground
                 agent->getRobot()->update();
                 // if (sphere) sphere->update();
-                if (ground) ground->update();
+                if (plane) plane->update();
                 // global.agents[0]->beforeStep(global);
                 // global.agents[0]->step(global.odeConfig.noise, global.time);
                 FOREACH(OdeAgentList, global.agents, i) {
