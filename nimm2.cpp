@@ -375,7 +375,7 @@ namespace lpzrobots {
       std::cout << "Axis2: " << axis2.x << "," << axis2.y << "," << axis2.z << std::endl;
       
       // Create joint with validated axes
-      joints[i] = new Hinge2Joint(objects[0], objects[i+1], pos, axis1, axis2);
+      joints[i] = new Hinge2Joint(objects[0], objects[i+1], pos, Axis(axis1), Axis(axis2));
       
       try {
           joints[i]->init(odeHandle, vsgHandleWheels, true, 

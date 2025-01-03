@@ -15,6 +15,8 @@
 // #include "humanoid_robot.h"
 // #include "robot.h"
 #include "nimm2.h"
+// #include "nimm4.h"
+#include "fourwheeled.h"
 
 // #include "sos.h"
 #include "sox.h"
@@ -338,13 +340,30 @@ OdeAgent* createVehicle(const OdeHandle& odeHandle, const VsgHandle& vsgHandle,
     int num = count_if(global.agents.begin(), global.agents.end(), agent_match_prefix(name));
     name += "_" + std::to_string(num+1);
     // OdeHandle odeHandleR = odeHandle;
+    if(type == 4){
+        FourWheeledConf conf = FourWheeled::getDefaultConf();
+        FourWheeled* robot = new FourWheeled(odeHandle, vsgHandle, conf, name);
+        robot->setColor(Color(.1,.1,.8));
+        robot->place(pose);
+        SoxConf sc = Sox::getDefaultConf();
+        AbstractController* controller = new Sox(sc);
+        // controller->setParam("epsC",0.02);
+        // controller->setParam("epsA",0.01);
+        global.configs.push_back(controller);
+        AbstractWiring* wiring = new One2OneWiring(new WhiteNormalNoise());
+        OdeAgent* agent = new OdeAgent(global, PlotOption(NoPlot));
+        agent->init(controller, robot, wiring);
+        global.agents.push_back(agent);
+        global.configs.push_back(agent);
+        return agent;
+    }
     OdeRobot* robot = new Nimm2(odeHandle, vsgHandle, nimm2conf, name);
     robot->setColor(Color(.1,.1,.8));
     robot->place(pose);
     SoxConf sc = Sox::getDefaultConf();
     // sc.steps4Averaging = 1;
     AbstractController* controller = new Sox(sc);
-    controller->setParam("epsC",0.02);
+    controller->setParam("epsC",0.05);
     controller->setParam("epsA",0.01);
     // controller->setParam("harmony",0.0);
     // controller->setParam("s4avg",5.0);
@@ -544,7 +563,7 @@ int main(int argc, char** argv)
         // GlobalData global;
         global.vsgHandle = vsgHandle;
         auto agent = createVehicle(odeHandle, vsgHandle, global, 
-                    vsg::translate(0.0, 0.0, 1.0) * vsg::rotate(M_PI * 2.0, vsg::dvec3(0.0,1.0,0.0)), 2 /*SphereVehicle*/);
+                    vsg::translate(0.0, 0.0, 0.0) /** vsg::rotate(M_PI * 2.0, vsg::dvec3(0.0,1.0,0.0))*/, 4 /*SphereVehicle*/);
         TrackRobotConf conf;
         conf.trackPos              = true;
         // conf.writeFile             = true;

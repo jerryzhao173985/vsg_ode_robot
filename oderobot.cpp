@@ -189,6 +189,7 @@ namespace lpzrobots {
   }
 
   void OdeRobot::place(const vsg::dmat4& pose) {
+    std::cout << "OdeRobot::place() - Starting place" << std::endl;
     placeIntern(pose);
     for( auto &i: sensors){
       attachSensor(i);
@@ -198,8 +199,7 @@ namespace lpzrobots {
     }
     assert(getMainPrimitive());
     initialPose=getMainPrimitive()->getPose();
-    initialRelativePose=getMainPrimitive()->getPose() * Pose(inverse_matrix(pose));
-    // initialRelativePose=getMainPrimitive()->getPose() * Pose(inverse(pose));
+    initialRelativePose=getMainPrimitive()->getPose() * Pose(vsg::inverse(pose)); // inverse function in VulkanSceneGraph/src/vsg/maths/maths_transform.cpp
     initialized=true;
   }
 
