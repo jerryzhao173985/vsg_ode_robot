@@ -105,7 +105,7 @@ namespace lpzrobots {
     // The pose from user/API represents where they want the robot's reference point to be
     // By multiplying the translation first, "take the user's desired position (pose) and offset it by width*0.6 in Z"
     // when a user specifies pose as (0,0,0), the robot will actually be placed at (0,0,width*0.6)
-    p2 = vsg::translate(vsg::dvec3(0.0, 0.0, 0.0)) * pose;
+    p2 = vsg::translate(vsg::dvec3(0.0, 0.0, width*0.6)) * pose;
     create(p2);
   };
 
@@ -151,7 +151,7 @@ namespace lpzrobots {
     // cap->setTexture("Images/wood.rgb");
     cap->init(odeHandle, cmass, vsgHandle, Primitive::Body | Primitive::Geom | Primitive::Draw);
     std::cout << "Nimm4::create() - Capsule created" << std::endl;
-    cap->setPose(vsg::rotate(-M_PI/2, 0.0, 1.0, 0.0) * pose);
+    cap->setPose(pose * vsg::rotate(-M_PI/2, 0.0, 1.0, 0.0));
     objects[0]=cap;
 
     // create wheels
@@ -172,11 +172,12 @@ namespace lpzrobots {
       Sphere* sph = new Sphere(radius);
       // sph->setTexture("Images/wood.rgb");
       sph->init(wheelHandle, wmass, vsgHandle.changeColor(Color(0.8,0.8,0.8)), Primitive::Body | Primitive::Geom | Primitive::Draw);
-      vsg::dvec3 wpos = vsg::dvec3( ((i-1)/2==0?-1:1)*length/2.0,
-                        ((i-1)%2==0?-1:1)*(width*0.5+wheelthickness),
-                        -width*0.6+radius );
+      // Calculate wheel positions relative to body
+      vsg::dvec3 wpos = vsg::dvec3( ((i-1)/2==0?-1:1)*length/2.0,     // x: front/back
+                        ((i-1)%2==0?-1:1)*(width*0.5+wheelthickness), // y: left/right
+                        -width*0.6+radius ); // z: no additional offset needed since body is already positioned
       std::cout << "Nimm4::create() - Wheel " << i << " created" << std::endl;
-      sph->setPose(vsg::translate(wpos) * vsg::rotate(M_PI/2, 0.0, 0.0, 1.0) * pose);
+      sph->setPose(pose * vsg::translate(wpos) * vsg::rotate(M_PI/2, 0.0, 0.0, 1.0));
       objects[i]=sph;
     }
 
@@ -184,7 +185,7 @@ namespace lpzrobots {
     for (int i=0; i<4; i++) {
       Pos anchor(dBodyGetPosition(objects[i+1]->getBody()));
       std::cout << "Nimm4::create() - Anchor " << i << " created" << std::endl;
-      joints[i] = new Hinge2Joint(objects[0], objects[i+1], anchor, Axis::Z() * pose, Axis::Y() * pose);
+      joints[i] = new Hinge2Joint(objects[0], objects[i+1], anchor, pose * Axis::Z(), pose * Axis::Y());
       joints[i]->init(odeHandle, vsgHandle, true, 2.01 * radius);
     }
     for (int i=0; i<4; i++) {

@@ -563,7 +563,7 @@ int main(int argc, char** argv)
         // GlobalData global;
         global.vsgHandle = vsgHandle;
         auto agent = createVehicle(odeHandle, vsgHandle, global, 
-                    vsg::translate(0.0, 0.0, 0.0) /** vsg::rotate(M_PI * 2.0, vsg::dvec3(0.0,1.0,0.0))*/, 4 /*SphereVehicle*/);
+                    vsg::translate(0.0, 0.0, 0.0) /** vsg::rotate(M_PI / 2.0, vsg::dvec3(0.0,0.0,1.0))*/, 4 /*SphereVehicle*/);
         TrackRobotConf conf;
         conf.trackPos              = true;
         // conf.writeFile             = true;
