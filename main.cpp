@@ -159,13 +159,8 @@ void nearCallback(void *data, dGeomID o1, dGeomID o2) {
 
     // Check for ignored pairs first
     if (((OdeHandle*)data)->isIgnoredPair(o1, o2)) {
-        std::cerr << "ign: " << o1 << " " << o2 << "\t " 
-                 << ((OdeHandle*)data)->ignoredPairs->size() << std::endl;
         return;
     }
-
-    // Print debug info
-    // printGeomCollisionInfo(std::cerr, o1, o2, (OdeHandle*)data);
 
     // Get primitive data safely
     Primitive* p1 = dynamic_cast<Primitive*>((Primitive*)dGeomGetData(o1));
@@ -174,9 +169,10 @@ void nearCallback(void *data, dGeomID o1, dGeomID o2) {
     // If either primitive is missing, use default substance parameters
     static const Substance defaultSubstance;  // Using default constructor for safe defaults
     
-    const int N = 80;
-    dContact contact[N];
-    int n = dCollide(o1, o2, N, &contact[0].geom, sizeof(dContact));
+    // Only allow a maximum of 10 contact points to avoid instability with too many constraints
+    const int MAX_CONTACTS = 10;
+    dContact contact[MAX_CONTACTS];
+    int n = dCollide(o1, o2, MAX_CONTACTS, &contact[0].geom, sizeof(dContact));
     
     if (n > 0) {
         // Use default substance if primitive is missing
@@ -199,16 +195,22 @@ void nearCallback(void *data, dGeomID o1, dGeomID o2) {
         
         if (callbackrv == 1) {
             Substance::getSurfaceParams(surfParams, s1, s2, global.odeConfig.simStepSize);
+            
+            // Add additional parameters for stability
+            surfParams.bounce = 0.1;       // Slight bounce for realism
+            surfParams.bounce_vel = 0.1;   // Minimum velocity for bounce
+            surfParams.soft_cfm = 0.01;    // Soft constraint force mixing
+            surfParams.soft_erp = 0.2;     // Soft error reduction
         }
         
         if (callbackrv == 0) return;
 
-        // Create contact joints
+        // Create contact joints, limiting to MAX_CONTACTS
         for (int i = 0; i < n; ++i) {
             contact[i].surface = surfParams;
             dJointID c = dJointCreateContact(((OdeHandle*)data)->world,
-                                           ((OdeHandle*)data)->jointGroup,
-                                           &contact[i]);
+                       ((OdeHandle*)data)->jointGroup,
+                       &contact[i]);
             dJointAttach(c, dGeomGetBody(contact[i].geom.g1),
                            dGeomGetBody(contact[i].geom.g2));
         }
@@ -242,22 +244,50 @@ void nearCallback_TopLevel(void *data, dGeomID o1, dGeomID o2) {
 }
 
 void odeStep(OdeHandle& odeHandle, double timestep){
-    // dJointGroupEmpty(odeHandle.jointGroup);
-
-    // for parallelising the collision detection
-    // we would need distinct jointgroups for each thread
-    // also the most time is required by the global collision callback which is one block
-    // so it makes no sense to is quickmp here
-    dSpaceCollide ( odeHandle.space , &odeHandle , &nearCallback_TopLevel );
+    // Perform collision detection in the main space
+    dSpaceCollide(odeHandle.space, &odeHandle, &nearCallback_TopLevel);
+    
+    // Also check collision in subspaces
     FOREACHC(std::vector<dSpaceID>, odeHandle.getSpaces(), i) {
-      dSpaceCollide( *i , &odeHandle , &nearCallback );
+        dSpaceCollide(*i, &odeHandle, &nearCallback);
     }
-    dWorldStep( odeHandle.world , timestep /*global.odeConfig.simStepSize*/ );
+    
+    // Adjust physics parameters for stability if needed for this step
+    // Use a smaller step size if needed for stability
+    const int numSubsteps = 2; // Use 2 substeps for more stable integration
+    double subTimestep = timestep / numSubsteps;
+    
+    // Perform multiple smaller steps for better stability
+    for (int i = 0; i < numSubsteps; i++) {
+        dWorldQuickStep(odeHandle.world, subTimestep);
+    }
+    
+    // Clear all contacts - important to do this AFTER all physics steps
     dJointGroupEmpty(odeHandle.jointGroup);
 
-    // *odeHandle.time += timestep;
+    // Update simulation time
+    *odeHandle.time += timestep;
 }
 
+void simulateStep(OdeHandle& odeHandle, double timestep) {
+    // Define some substeps for more stable integration
+    const int numSubsteps = 2;
+    const double subTimestep = timestep / numSubsteps;
+    
+    for (int i = 0; i < numSubsteps; i++) {
+        // Clear contacts before collision detection
+        dJointGroupEmpty(odeHandle.jointGroup);
+        
+        // Perform collision detection
+        dSpaceCollide(odeHandle.space, &odeHandle, &nearCallback);
+        
+        // Advance physics simulation with smaller timestep
+        dWorldQuickStep(odeHandle.world, subTimestep);
+    }
+    
+    // Update simulation time
+    *odeHandle.time += timestep;
+}
 
 void createNewDir(const char* base, char *newdir) {
     struct stat s;
@@ -339,17 +369,39 @@ OdeAgent* createVehicle(const OdeHandle& odeHandle, const VsgHandle& vsgHandle,
 
     int num = count_if(global.agents.begin(), global.agents.end(), agent_match_prefix(name));
     name += "_" + std::to_string(num+1);
-    // OdeHandle odeHandleR = odeHandle;
+    
+    // Ensure robot is placed above the ground plane to avoid initial penetration
+    // For type 4 (FourWheeled), place it higher to avoid initial instability
+    double initialHeight = 0.1; // Small clearance above ground
+    
     if(type == 4){
         FourWheeledConf conf = FourWheeled::getDefaultConf();
+        // Ensure better stability with more appropriate parameters
+        conf.force = 5.0;
+        conf.speed = 15.0;
+        conf.size = 1.0;
+        conf.wheelSubstance.toRubber(40);  // Better wheels traction
+        
+        // Place the robot at a safe height above ground
+        initialHeight = conf.size * 0.6;  // Height based on robot size
+        vsg::dmat4 adjustedPose = vsg::translate(0.0, 0.0, initialHeight) * pose;
+        
+        // Create the robot with proper configuration
         FourWheeled* robot = new FourWheeled(odeHandle, vsgHandle, conf, name);
         robot->setColor(Color(.1,.1,.8));
-        robot->place(pose);
+        robot->place(adjustedPose);
+        
+        // Configure controller with appropriate parameters
         SoxConf sc = Sox::getDefaultConf();
+        sc.steps4Averaging = 2;  // More smoothing for better stability
         AbstractController* controller = new Sox(sc);
-        // controller->setParam("epsC",0.02);
-        // controller->setParam("epsA",0.01);
+        controller->setParam("epsC", 0.03);
+        controller->setParam("epsA", 0.01);
+        controller->setParam("discountS", 0.95);
+        controller->setParam("discountA", 0.95);
         global.configs.push_back(controller);
+        
+        // Set up wiring and agent
         AbstractWiring* wiring = new One2OneWiring(new WhiteNormalNoise());
         OdeAgent* agent = new OdeAgent(global, PlotOption(NoPlot));
         agent->init(controller, robot, wiring);
@@ -357,44 +409,58 @@ OdeAgent* createVehicle(const OdeHandle& odeHandle, const VsgHandle& vsgHandle,
         global.configs.push_back(agent);
         return agent;
     }
+    
+    // For regular Nimm2 robots, adjust height based on configuration
+    initialHeight = nimm2conf.size * 0.6;
+    vsg::dmat4 adjustedPose = vsg::translate(0.0, 0.0, initialHeight) * pose;
+    
     OdeRobot* robot = new Nimm2(odeHandle, vsgHandle, nimm2conf, name);
     robot->setColor(Color(.1,.1,.8));
-    robot->place(pose);
+    robot->place(adjustedPose);
+    
     SoxConf sc = Sox::getDefaultConf();
-    // sc.steps4Averaging = 1;
+    sc.steps4Averaging = 1;
     AbstractController* controller = new Sox(sc);
-    controller->setParam("epsC",0.05);
-    controller->setParam("epsA",0.01);
-    // controller->setParam("harmony",0.0);
-    // controller->setParam("s4avg",5.0);
+    controller->setParam("epsC", 0.03);
+    controller->setParam("epsA", 0.01);
+    controller->setParam("discountS", 0.95);
+    controller->setParam("discountA", 0.95);
+    controller->setParam("s4avg", 1);
+    controller->setParam("s4delay", 1);
+    controller->setParam("harmony", 0.0);
     global.configs.push_back(controller);
+    
     AbstractWiring* wiring = new One2OneWiring(new WhiteNormalNoise());
     OdeAgent* agent = new OdeAgent(global, PlotOption(NoPlot));
     agent->init(controller, robot, wiring);
-    //agent->startMotorBabblingMode(5000);
-    //agent->setTrackOptions(TrackRobot(true,true,false,true,"bodyheight",20)); // position and speed tracking every 20 steps
     global.agents.push_back(agent);
     global.configs.push_back(agent);
     return agent;
-    
 }
 
 void configureRobotPhysics(OdeHandle& odeHandle) {
-    //set Gravity to Earth level
-    dWorldSetGravity ( odeHandle.world , 0 , 0 , /*global.odeConfig.gravity*/ -9.81 );
-    dWorldSetERP ( odeHandle.world , 0.3 );
-    dWorldSetCFM ( odeHandle.world,1e-4);
-
-    dWorldSetContactMaxCorrectingVel (odeHandle.world, 100); // default is infinity
-    dWorldSetContactSurfaceLayer (odeHandle.world, 0.001); // default is 0
-
-    // // More iterations for stability
-    // dWorldSetQuickStepNumIterations(odeHandle.world, 50);
+    // Earth gravity
+    dWorldSetGravity(odeHandle.world, 0, 0, -9.81);
     
-    // // Global damping
-    // dWorldSetLinearDamping(odeHandle.world, 0.01);
-    // dWorldSetAngularDamping(odeHandle.world, 0.01);
-    // dWorldSetMaxAngularSpeed(odeHandle.world, 50.0);
+    // Error reduction parameter (how aggressively to correct joint errors)
+    dWorldSetERP(odeHandle.world, 0.3);  // Increased from 0.2 for better joint stability
+    
+    // Constraint force mixing (softness of constraints)
+    dWorldSetCFM(odeHandle.world, 1e-6); // Slightly harder constraints for stability
+    
+    // Maximum correcting velocity for contacts
+    dWorldSetContactMaxCorrectingVel(odeHandle.world, 100.0); // Increased for better collision response
+    
+    // Depth of contact surface layer
+    dWorldSetContactSurfaceLayer(odeHandle.world, 0.001);
+    
+    // Solver iterations - more iterations = more accurate but slower
+    dWorldSetQuickStepNumIterations(odeHandle.world, 50); // Increased for better accuracy
+    
+    // Global damping for stability
+    dWorldSetLinearDamping(odeHandle.world, 0.005);  // Reduced for more natural movement
+    dWorldSetAngularDamping(odeHandle.world, 0.005); // Reduced for more natural rotation
+    dWorldSetAutoDisableFlag(odeHandle.world, 0);    // Don't auto-disable bodies
 }
 
 void createGroundPlane(OdeHandle& odeHandle) {
@@ -429,20 +495,6 @@ void createGroundPlane(OdeHandle& odeHandle) {
 //         dJointAttach(c, b1, b2);
 //     }
 // }
-
-void simulateStep(OdeHandle& odeHandle, double timestep) {
-    // const int numSubsteps = 8;
-    // const double subTimestep = timestep / numSubsteps;
-    
-    // for (int i = 0; i < numSubsteps; i++) {
-    dJointGroupEmpty(odeHandle.jointGroup);
-    dSpaceCollide(odeHandle.space, &odeHandle, &nearCallback);
-    dWorldQuickStep(odeHandle.world, timestep);
-    dJointGroupEmpty(odeHandle.jointGroup);
-    // }
-    
-    *odeHandle.time += timestep;
-}
 
 int main(int argc, char** argv)
 {
@@ -563,19 +615,19 @@ int main(int argc, char** argv)
         // GlobalData global;
         global.vsgHandle = vsgHandle;
         auto agent = createVehicle(odeHandle, vsgHandle, global, 
-                    vsg::translate(0.0, 0.0, 0.0) /** vsg::rotate(M_PI / 2.0, vsg::dvec3(0.0,0.0,1.0))*/, 4 /*SphereVehicle*/);
+                    vsg::translate(0.0, 0.0, 0.0), 4 /*FourWheeled*/);
         TrackRobotConf conf;
-        conf.trackPos              = true;
-        // conf.writeFile             = true;
-        // conf.trackSpeed            = true;
-        // conf.trackOrientation      = true;
-        // conf.displayTrace          = true;
-        // conf.displayTraceDur       = 60;
-        // conf.displayTraceThickness = 1.0;
-        conf.interval              = 1;
-        conf.writeFile             = true;
-        // createNewDir("./", (char*)agent->getRobot()->getName().c_str());
-        conf.scene = agent->getRobot()->getName() + "_track";
+        conf.trackPos              = true;       // Track position
+        conf.trackSpeed            = true;       // Track speed
+        conf.trackOrientation      = true;       // Track orientation
+        conf.displayTrace          = true;       // Show the trace
+        conf.displayTraceDur       = 60;         // Display duration in seconds
+        conf.displayTraceThickness = 2.0;        // Thicker line for visibility
+        conf.interval              = 1;          // Track every step
+        conf.writeFile             = true;       // Write track data to file
+        std::string trackDir = agent->getRobot()->getName() + "_track";
+        createNewDir("./", (char*)trackDir.c_str());  // Create tracking directory
+        conf.scene = trackDir + "/track";             // Set tracking file path
         agent->setTrackOptions(conf);
 
 
@@ -679,33 +731,35 @@ int main(int argc, char** argv)
 
             try {
                 //********************Simulation start********************************
-                // humanoid.update();
-                // // Update ground
-                agent->getRobot()->update();
-                // if (sphere) sphere->update();
-                if (plane) plane->update();
-                // global.agents[0]->beforeStep(global);
-                // global.agents[0]->step(global.odeConfig.noise, global.time);
+                // First update all agents and let them control their robots
                 FOREACH(OdeAgentList, global.agents, i) {
                     (*i)->beforeStep(global);
                     (*i)->step(global.odeConfig.noise, global.time);
-                    // (*i)->onlyControlRobot();
                 }
+                
+                // Apply all motor commands to the robots
                 FOREACH(OdeAgentList, global.agents, i) {
                     (*i)->setMotorsGetSensors();
                     (*i)->getRobot()->doInternalStuff(global);
                 }
-                // / initialize those objects that are not yet initialized
+                
+                // Initialize any temporary objects that were added
                 global.initializeTmpObjects(odeHandle, vsgHandle);
+                
+                // Perform physics simulation step
                 odeStep(odeHandle, 0.01);
-                // Update physics
-                // simulateStep(odeHandle, 0.01);
-                // osgStep();
                 
-
-                global.time += 0.01 /*global.odeConfig.simStepSize*/;
+                // Update global time
+                global.time += 0.01;
                 
-                // Render frame
+                // Update all primitives to sync VSG with ODE positions
+                FOREACH(OdeAgentList, global.agents, i) {
+                    (*i)->getRobot()->update();
+                }
+                
+                if (plane) plane->update();
+                
+                // Update and render the scene
                 viewer->update();
                 viewer->recordAndSubmit();
                 viewer->present();

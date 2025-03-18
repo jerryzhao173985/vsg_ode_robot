@@ -81,36 +81,31 @@ namespace lpzrobots {
     assert(isInitDataSet);
     len = range;
 
-    // Create ray: thickness=0 means we draw just a line
-    // The ray extends along the local Z-axis. The length is visual only; the ODE ray range is set separately.
-    ray = new Ray(range, 0.0f /*0.005*/, len);
+    // Create ray
+    ray = new Ray(range, 0.0f, len);
 
-    // Transform that places ray relative to 'own' primitive
-    transform = new Transform(own, ray, pose, true /*deleteChild*/);
+    // The key is to ensure the transform correctly ties the ray to the parent
+    transform = new Transform(own, ray, pose, true);
 
-    // If we draw the ray or not depends on drawMode
     char mode = Primitive::Geom;
     if(drawMode == drawAll || drawMode == drawRay) {
-      mode |= Primitive::Draw;
+        mode |= Primitive::Draw;
     }
 
     transform->init(odeHandle, 0, vsgHandle, mode);
-    // Set collision callback on transform's substance
     transform->substance.setCollisionCallback(rayCollCallback, this);
 
-    // If we also want to draw a sensor body (a cylinder representing the sensor device)
     switch(drawMode) {
-      case drawAll:
-      case drawSensor:
-        // Create a cylinder representing the sensor device itself
-        sensorBody = new Cylinder(size, size/5.0);
-        sensorBody->init(odeHandle, 0, vsgHandle, Primitive::Draw);
-        break;
-      default:
-        break;
+        case drawAll:
+        case drawSensor:
+            sensorBody = new Cylinder(size, size/5.0);
+            sensorBody->init(odeHandle, 0, vsgHandle, Primitive::Draw);
+            break;
+        default:
+            break;
     }
 
-    update();
+    update();  // Initial update to position everything
     initialised = true;
   }
 
@@ -152,34 +147,31 @@ namespace lpzrobots {
   void RaySensor::update() {
     if (!initialised) return;
 
-    if (len != lastlen) {
-      // Update the ray visualization
-      ray->setLength(len);
-      // Color the ray: red intensity based on length
-      ray->setColor(Color(len*1.5, 0.0, 0.0));
+    // Always update the transform and positions, not just when length changes
+    if (transform && transform->getTransformNode()) {
+        // The transform should automatically follow the parent (robot body)
+        // But we need to ensure the ray updates its visual representation
+        ray->update();
 
-      if(sensorBody) {
-        // Sensor body color also changes with length
-        sensorBody->setColor(Color(len*2.0, 0.0, 0.0));
-      }
-      lastlen = len;
+        if(sensorBody) {
+            // Update sensor body position relative to the ray's current position
+            // This ensures it follows the robot's movement
+            Pose rayPose = ray->getPose();
+            Pose bodyPose = vsg::translate(0.0, 0.0, 0.005) * rayPose;
+            sensorBody->setPose(bodyPose);
+            sensorBody->update();
+        }
     }
 
-    // Update the ray
-    ray->update();
+    // Update visualization color if length changed
+    if (len != lastlen) {
+        ray->setLength(len);
+        ray->setColor(Color(len*1.5, 0.0, 0.0));
 
-    if(sensorBody) {
-      // Position the sensor body slightly offset if needed
-      // We move it slightly along z so it's not hidden by the ray line
-      // The final position should be parent's pose * this sensor's pose * offset
-      // The transform places the ray correctly relative to 'own'.
-      // The sensorBody can be placed at the same position as the transform or slightly offset.
-      // We'll place it at the start of the ray. The ray center is at 0,0,(length/2)
-      // If we want the sensor body at the ray start (and ray extends forward),
-      // Actually, the ray is centered around its origin and extends ±length/2.
-      // We want the sensor body at the ray start (where the parent is), so offset by a small amount along z.
-      Pose bodyPose = vsg::translate(0.0,0.0,0.005) * ray->getPose() * transform->getPose();
-      sensorBody->setMatrix(bodyPose.getMatrix());
+        if(sensorBody) {
+            sensorBody->setColor(Color(len*2.0, 0.0, 0.0));
+        }
+        lastlen = len;
     }
   }
 

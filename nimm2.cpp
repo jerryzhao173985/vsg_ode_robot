@@ -381,13 +381,21 @@ namespace lpzrobots {
           joints[i]->init(odeHandle, vsgHandleWheels, true, 
                         conf.sphereWheels ? 2.01 * radius : wheelthickness*1.05);
                         
-          // Add joint parameters for stability
+          // Lock first axis to prevent steering (if not a steering vehicle)
           joints[i]->setParam(dParamLoStop, 0);
           joints[i]->setParam(dParamHiStop, 0);
-          joints[i]->setParam(dParamCFM, 0.001);
-          joints[i]->setParam(dParamERP, 0.8);
-          joints[i]->setParam(dParamStopCFM, 0.0001);
-          joints[i]->setParam(dParamStopERP, 0.8);
+          
+          // Make joints more rigid
+          joints[i]->setParam(dParamCFM, 0.0001);  // Less softness
+          joints[i]->setParam(dParamERP, 0.8);     // More error correction
+          
+          // Add damping to the rotation axis
+          joints[i]->setParam(dParamVel2, 0);      // Initial velocity
+          joints[i]->setParam(dParamFMax2, 0.01);  // Small damping force
+          
+          // Suspension parameters (softer)
+          joints[i]->setParam(dParamSuspensionCFM, 0.1);  // Soft suspension
+          joints[i]->setParam(dParamSuspensionERP, 0.2);  // Gentle correction
           
       } catch (const std::exception& e) {
           std::cerr << "Joint initialization failed: " << e.what() << std::endl;

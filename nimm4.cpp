@@ -98,14 +98,9 @@ namespace lpzrobots {
 
 
   void Nimm4::placeIntern(const vsg::dmat4& pose){
-    // the position of the robot is the center of the body (without wheels)
-    // to set the vehicle on the ground when the z component of the position is 0
-    // width*0.6 is added (without this the wheels and half of the robot will be in the ground)
-    vsg::dmat4 p2;
-    // The pose from user/API represents where they want the robot's reference point to be
-    // By multiplying the translation first, "take the user's desired position (pose) and offset it by width*0.6 in Z"
-    // when a user specifies pose as (0,0,0), the robot will actually be placed at (0,0,width*0.6)
-    p2 = vsg::translate(vsg::dvec3(0.0, 0.0, width*0.6)) * pose;
+    // Calculate elevation needed to place bottom of vehicle at ground level
+    double elevationOffset = width*0.6; // Half width plus wheel clearance
+    vsg::dmat4 p2 = vsg::translate(vsg::dvec3(0.0, 0.0, elevationOffset)) * pose;
     create(p2);
   };
 
