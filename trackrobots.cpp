@@ -21,6 +21,8 @@ bool TrackRobot::open(const Trackable* robot) {
         }
 
         char filename[1024];
+        char filepath[1024];
+        
         if (conf.autoFilename) {
             std::cout << "DEBUG: Using auto filename" << std::endl;
             
@@ -50,23 +52,19 @@ bool TrackRobot::open(const Trackable* robot) {
                 return false;
             }
             
-            std::cout << "DEBUG: Scene: " << conf.scene << ", Trackable: " << trackableName << std::endl;
+            std::cout << "DEBUG: Scene base path: " << conf.scene << ", Trackable: " << trackableName << std::endl;
             
+            // Build just the filename part (without directory)
             if (conf.id >= 0) {
-                int result = snprintf(filename, sizeof(filename), "%s_track_%s_%i_%s.log",
-                            trackableName.c_str(), conf.scene.c_str(), conf.id, date);
-                if (result >= sizeof(filename)) {
-                    std::cout << "DEBUG: Failed - filename buffer would overflow (auto with id)" << std::endl;
-                    return false;
-                }
+                snprintf(filename, sizeof(filename), "%s_%i_%s.log",
+                        trackableName.c_str(), conf.id, date);
             } else {
-                int result = snprintf(filename, sizeof(filename), "%s_track_%s_%s.log",
-                            trackableName.c_str(), conf.scene.c_str(), date);
-                if (result >= sizeof(filename)) {
-                    std::cout << "DEBUG: Failed - filename buffer would overflow (auto without id)" << std::endl;
-                    return false;
-                }
+                snprintf(filename, sizeof(filename), "%s_%s.log",
+                        trackableName.c_str(), date);
             }
+            
+            // Now build the full path including directory
+            snprintf(filepath, sizeof(filepath), "%s/%s", conf.scene.c_str(), filename);
         } else {
             std::cout << "DEBUG: Using manual filename" << std::endl;
             
@@ -75,29 +73,36 @@ bool TrackRobot::open(const Trackable* robot) {
                 return false;
             }
             
+            // For manual filename, use the scene directly with a suffix
             if (conf.id >= 0) {
-                int result = snprintf(filename, sizeof(filename), "%s_%i.log", conf.scene.c_str(), conf.id);
-                if (result >= sizeof(filename)) {
-                    std::cout << "DEBUG: Failed - filename buffer would overflow (manual with id)" << std::endl;
-                    return false;
-                }
+                snprintf(filepath, sizeof(filepath), "%s_%i.log", conf.scene.c_str(), conf.id);
             } else {
-                int result = snprintf(filename, sizeof(filename), "%s.log", conf.scene.c_str());
-                if (result >= sizeof(filename)) {
-                    std::cout << "DEBUG: Failed - filename buffer would overflow (manual without id)" << std::endl;
-                    return false;
-                }
+                snprintf(filepath, sizeof(filepath), "%s.log", conf.scene.c_str());
             }
         }
         
-        std::cout << "DEBUG: Attempting to open file: " << filename << std::endl;
-        file = fopen(filename, "w");
+        std::cout << "DEBUG: Attempting to open file: " << filepath << std::endl;
+        
+        // Ensure the directory exists
+        std::string dirPath = conf.scene;
+        struct stat s;
+        if (stat(dirPath.c_str(), &s) != 0 || !S_ISDIR(s.st_mode)) {
+            std::cout << "DEBUG: Directory doesn't exist, trying to create: " << dirPath << std::endl;
+            #ifdef _WIN32
+                mkdir(dirPath.c_str());
+            #else
+                mkdir(dirPath.c_str(), S_IRWXU | S_IRWXG | S_IROTH | S_IXOTH);
+            #endif
+        }
+        
+        file = fopen(filepath, "w");
         if (!file) {
-            std::cout << "DEBUG: Failed to open file: " << filename << std::endl;
+            std::cerr << "ERROR: Failed to open tracking file: " << filepath << " (errno: " << errno << ")" << std::endl;
+            perror("fopen failed");
             return false;
         }
 
-        std::cout << "DEBUG: Successfully opened file" << std::endl;
+        std::cout << "DEBUG: Successfully opened file: " << filepath << std::endl;
         
         fprintf(file, "#C t");
         if (conf.trackPos) fprintf(file, " x y z");

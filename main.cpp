@@ -12,6 +12,7 @@
 #include <vector>
 #include <cmath>
 #include <sys/stat.h>
+#include <unistd.h> // For getcwd
 // #include "humanoid_robot.h"
 // #include "robot.h"
 #include "nimm2.h"
@@ -42,6 +43,63 @@ Plane* makePhysicsScene(OdeHandle& odeHandle, VsgHandle& vsgHandle){
     dGeomSetData(ground, (void*)plane);
     //    std::cout << "GROUND: " << ground << std::endl;
     return plane;
+}
+
+// Function to add boundary walls to the scene
+std::vector<Box*> addBoundaryWalls(OdeHandle& odeHandle, VsgHandle& vsgHandle, 
+                                  double arenaSize = 20.0, double wallHeight = 3.0) {
+    // Store all walls in a vector to return them
+    std::vector<Box*> walls;
+    
+    // Wall thickness
+    double wallThickness = 0.05;
+    
+    // Common options for all walls
+    double mass = 0.0; // Static walls with no mass
+    int mode = Primitive::Geom | Primitive::Draw; // Only need collision geometry and visual representation
+    
+    // Create a special VsgHandle with a different color for walls
+    VsgHandle wallVsgHandle = vsgHandle;
+    wallVsgHandle.color = Color(0.5, 0.5, 0.6); // Grey-blue walls
+    
+    // Define wall dimensions and positions
+    struct WallDef {
+        double lengthX, lengthY, lengthZ;
+        vsg::dmat4 pose;
+    };
+    
+    // Create 4 walls around the arena
+    WallDef wallDefs[] = {
+        // North wall (positive Y)
+        { arenaSize*2 + wallThickness*2, wallThickness*2, wallHeight,
+          vsg::translate(0.0, arenaSize/2 + wallThickness/2, plane_z) },
+        // South wall (negative Y)
+        { arenaSize*2 + wallThickness*2, wallThickness*2, wallHeight,
+          vsg::translate(0.0, -arenaSize/2 - wallThickness/2, plane_z) },
+        // East wall (positive X)
+        { wallThickness*2, arenaSize*2 + wallThickness*2, wallHeight,
+          vsg::translate(arenaSize/2 + wallThickness/2, 0.0, plane_z) },
+        // West wall (negative X)
+        { wallThickness*2, arenaSize*2 + wallThickness*2, wallHeight,
+          vsg::translate(-arenaSize/2 - wallThickness/2, 0.0, plane_z) }
+    };
+    
+    // Create each wall and add it to the scene
+    for (const auto& def : wallDefs) {
+        Box* wall = new Box(def.lengthX, def.lengthY, def.lengthZ);
+        wall->init(odeHandle, mass, wallVsgHandle, mode);
+        wall->setPose(def.pose);
+        
+        // Set wall substance to something hard
+        Substance wallSubstance;
+        wallSubstance.toPlastic(40); // Hard plastic
+        wall->setSubstance(wallSubstance);
+        
+        walls.push_back(wall);
+    }
+    
+    std::cout << "Created " << walls.size() << " boundary walls" << std::endl;
+    return walls;
 }
 
 //------------------------------------------------------------------------
@@ -291,18 +349,67 @@ void simulateStep(OdeHandle& odeHandle, double timestep) {
 
 void createNewDir(const char* base, char *newdir) {
     struct stat s;
+    char fullpath[1024];
+    
     for(int i=0; i<1000; ++i) {
-      if(i==0)
-        sprintf(newdir,"%s", base);
-      else
-        sprintf(newdir,"%s%03i", base, i);
-      if(stat(newdir,&s)!=0) { // file/dir does not exist -> take it
-        mkdir(newdir, S_IREAD | S_IWRITE | S_IEXEC | S_IRGRP | S_IXGRP );
-        return;
-      }
+        if(i==0)
+            sprintf(newdir, "%s", base);
+        else
+            sprintf(newdir, "%s%03i", base, i);
+            
+        // Check if directory exists
+        if(stat(newdir, &s) != 0) { 
+            // Directory doesn't exist, create it
+            #ifdef _WIN32
+                int result = mkdir(newdir);
+            #else
+                int result = mkdir(newdir, S_IRWXU | S_IRWXG | S_IROTH | S_IXOTH);
+            #endif
+            
+            if(result != 0) {
+                std::cerr << "Error creating directory: " << newdir 
+                          << " (errno: " << errno << ")" << std::endl;
+                perror("mkdir failed");
+                
+                // Try with absolute path
+                char cwd[1024];
+                if(getcwd(cwd, sizeof(cwd)) != NULL) {
+                    sprintf(fullpath, "%s/%s", cwd, newdir);
+                    std::cout << "Trying with absolute path: " << fullpath << std::endl;
+                    
+                    #ifdef _WIN32
+                        result = mkdir(fullpath);
+                    #else
+                        result = mkdir(fullpath, S_IRWXU | S_IRWXG | S_IROTH | S_IXOTH);
+                    #endif
+                    
+                    if(result == 0) {
+                        strcpy(newdir, fullpath);
+                        std::cout << "Successfully created directory: " << newdir << std::endl;
+                        return;
+                    } else {
+                        std::cerr << "Failed to create directory with absolute path: " 
+                                  << fullpath << std::endl;
+                        perror("mkdir failed with absolute path");
+                    }
+                }
+            } else {
+                std::cout << "Successfully created directory: " << newdir << std::endl;
+                return;
+            }
+        } else if(S_ISDIR(s.st_mode)) {
+            // Directory exists
+            std::cout << "Using existing directory: " << newdir << std::endl;
+            return;
+        }
+        // If we get here, either the path exists but is not a directory,
+        // or directory creation failed. Try the next index.
     }
-    assert(1); // should not happen
-  }
+    
+    std::cerr << "ERROR: Failed to create directory after 1000 attempts." << std::endl;
+    // Fall back to current directory
+    strcpy(newdir, "./");
+}
 
 
 // predicate that matches agents that have the same name prefix
@@ -612,6 +719,10 @@ int main(int argc, char** argv)
         auto plane = makePhysicsScene(odeHandle, vsgHandle);
         vsgHandle.parent=vsgHandle.scene->scene;
 
+        // Add boundary walls to prevent robot from falling off the edge
+        // Parameters: odeHandle, vsgHandle, arenaSize (20.0), wallHeight (3.0)
+        std::vector<Box*> boundaryWalls = addBoundaryWalls(odeHandle, vsgHandle, 5.0, 2.0);
+
         // GlobalData global;
         global.vsgHandle = vsgHandle;
         auto agent = createVehicle(odeHandle, vsgHandle, global, 
@@ -625,9 +736,21 @@ int main(int argc, char** argv)
         conf.displayTraceThickness = 2.0;        // Thicker line for visibility
         conf.interval              = 1;          // Track every step
         conf.writeFile             = true;       // Write track data to file
-        std::string trackDir = agent->getRobot()->getName() + "_track";
-        createNewDir("./", (char*)trackDir.c_str());  // Create tracking directory
-        conf.scene = trackDir + "/track";             // Set tracking file path
+        
+        // Fix tracking directory and file path setup
+        std::string robotName = agent->getRobot()->getName();
+        char dirName[256];
+        sprintf(dirName, "%s_track", robotName.c_str());
+        createNewDir("./", dirName);
+        
+        // Use the full path for the tracking file
+        char fullPath[512];
+        sprintf(fullPath, "./%s/track", dirName);
+        conf.scene = std::string(fullPath);
+        
+        std::cout << "Creating tracking files in directory: " << dirName << std::endl;
+        std::cout << "Using scene path: " << conf.scene << std::endl;
+        
         agent->setTrackOptions(conf);
 
 
@@ -759,6 +882,11 @@ int main(int argc, char** argv)
                 
                 if (plane) plane->update();
                 
+                // Update boundary walls if any exist
+                for (Box* wall : boundaryWalls) {
+                    if (wall) wall->update();
+                }
+                
                 // Update and render the scene
                 viewer->update();
                 viewer->recordAndSubmit();
@@ -774,6 +902,12 @@ int main(int argc, char** argv)
         // if (ground) {
         //     delete ground;
         // }
+
+        // Clean up the boundary walls
+        for (Box* wall : boundaryWalls) {
+            if (wall) delete wall;
+        }
+        boundaryWalls.clear();
 
         // Now that the robot and its joints are safely destroyed, 
         // you can close ODE and VSG:
