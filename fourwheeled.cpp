@@ -145,8 +145,12 @@ namespace lpzrobots {
 
   // returns the joint with index i
   Joint* FourWheeled::getJoint(int i){
-    if(i>3)i=3;
-    if(i<0)i=0;
+    if(i < 0 || i >= (int)joints.size()) {
+        std::cerr << "FourWheeled::getJoint: Joint index " << i << " out of bounds (0-" 
+                  << (joints.size()-1) << ")" << std::endl;
+        // Return the first joint as a fallback if available
+        return joints.empty() ? nullptr : joints[0];
+    }
     return joints[i];
   }
 

@@ -41,16 +41,21 @@ bool Primitive::destroyGeom = true;
 // Helper function for matrix conversion
 vsg::dmat4 odeToVsgMatrix(const dReal* position, const dReal* rotation) {
     if (!position || !rotation) {
-        std::cerr << "odeToVsgMatrix: Null position or rotation" << std::endl;
-        return vsg::dmat4(); // Identity matrix
+        std::cerr << "odeToVsgMatrix: Null position or rotation, returning identity matrix" << std::endl;
+        return vsg::dmat4(1.0); // Identity matrix
     }
 
-    return vsg::dmat4(
-        rotation[0], rotation[1], rotation[2], 0.0,
-        rotation[4], rotation[5], rotation[6], 0.0,
-        rotation[8], rotation[9], rotation[10], 0.0,
-        position[0], position[1], position[2], 1.0
-    );
+    try {
+        return vsg::dmat4(
+            rotation[0], rotation[1], rotation[2], 0.0,
+            rotation[4], rotation[5], rotation[6], 0.0,
+            rotation[8], rotation[9], rotation[10], 0.0,
+            position[0], position[1], position[2], 1.0
+        );
+    } catch (const std::exception& e) {
+        std::cerr << "odeToVsgMatrix: Exception during matrix creation: " << e.what() << std::endl;
+        return vsg::dmat4(1.0); // Identity matrix as fallback
+    }
 }
 
 
@@ -176,22 +181,17 @@ void Primitive::setMatrix(const vsg::dmat4& matrix) {
 
 // In Primitive::update()
 void Primitive::update() {
-    std::cout << "Primitive::update() - Starting update" << std::endl;
     if (mode & Draw && transformNode) {
-        std::cout << "  Has transform node, updating matrix" << std::endl;
-        if (!geom && !body) {
-            std::cout << "  WARNING: Neither geom nor body exists!" << std::endl;
-        }
         try {
-            const vsg::dmat4& mat = static_cast<const vsg::dmat4&>(getPose());
-            std::cout << "  Got pose matrix successfully" << std::endl;
+            if (!geom && !body) {
+                return; // Nothing to update if no physics objects exist
+            }
+            
+            const vsg::dmat4& mat = getPose().getMatrix();
             transformNode->matrix = mat;
-            std::cout << "  Matrix updated successfully" << std::endl;
         } catch (const std::exception& e) {
-            std::cout << "  ERROR updating matrix: " << e.what() << std::endl;
+            std::cerr << "Error in Primitive::update(): " << e.what() << std::endl;
         }
-    } else {
-        std::cout << "  No transform node or Draw mode not set (mode=" << (int)mode << ")" << std::endl;
     }
 }
 
@@ -213,8 +213,8 @@ Pose Primitive::getPose() const {
     } else if (body) {
         return vsgPose(body);
     }
-    std::cout << "  WARNING: No geom or body, returning default pose" << std::endl;
-    return Pose();
+    // Return identity pose when neither geom nor body exists
+    return Pose(vsg::dmat4(1.0));
 }
 
 Pos Primitive::getVel() const {
@@ -520,24 +520,7 @@ void Box::update() {
     if (!(mode & Draw) || !transformNode) return;
 
     try {
-        vsg::dmat4 matrix;
-        
-        if (body) {
-            const dReal* pos = dBodyGetPosition(body);
-            const dReal* rot = dBodyGetRotation(body);
-            if (pos && rot) {
-                matrix = odeToVsgMatrix(pos, rot);
-            }
-        } else if (geom) {
-            const dReal* pos = dGeomGetPosition(geom);
-            const dReal* rot = dGeomGetRotation(geom);
-            if (pos && rot) {
-                matrix = odeToVsgMatrix(pos, rot);
-            }
-        }
-
-        transformNode->matrix = matrix;
-        
+        transformNode->matrix = getPose().getMatrix();
     } catch (const std::exception& e) {
         std::cerr << "Box::update: " << e.what() << std::endl;
     }
@@ -639,8 +622,11 @@ void Sphere::init(const OdeHandle& odeHandle, double mass,
 
 void Sphere::update() {
     if (mode & Draw && transformNode) {
-        const vsg::dmat4& mat = static_cast<const vsg::dmat4&>(getPose());
-        transformNode->matrix = mat;
+        try {
+            transformNode->matrix = getPose().getMatrix();
+        } catch (const std::exception& e) {
+            std::cerr << "Sphere::update: " << e.what() << std::endl;
+        }
     }
 }
 
@@ -721,8 +707,11 @@ void Capsule::init(const OdeHandle& odeHandle, double mass,
 
 void Capsule::update() {
     if (mode & Draw && transformNode) {
-        const vsg::dmat4& mat = static_cast<const vsg::dmat4&>(getPose());
-        transformNode->matrix = mat;
+        try {
+            transformNode->matrix = getPose().getMatrix();
+        } catch (const std::exception& e) {
+            std::cerr << "Capsule::update: " << e.what() << std::endl;
+        }
     }
 }
 
@@ -800,8 +789,11 @@ void Cone::init(const OdeHandle& odeHandle, double mass,
 
 void Cone::update() {
     if (mode & Draw && transformNode) {
-        const vsg::dmat4& mat = static_cast<const vsg::dmat4&>(getPose());
-        transformNode->matrix = mat;
+        try {
+            transformNode->matrix = getPose().getMatrix();
+        } catch (const std::exception& e) {
+            std::cerr << "Cone::update: " << e.what() << std::endl;
+        }
     }
 }
 
@@ -880,8 +872,11 @@ void Cylinder::init(const OdeHandle& odeHandle, double mass,
 
 void Cylinder::update() {
     if (mode & Draw && transformNode) {
-        const vsg::dmat4& mat = static_cast<const vsg::dmat4&>(getPose());
-        transformNode->matrix = mat;
+        try {
+            transformNode->matrix = getPose().getMatrix();
+        } catch (const std::exception& e) {
+            std::cerr << "Cylinder::update: " << e.what() << std::endl;
+        }
     }
 }
 
@@ -959,8 +954,11 @@ void Disk::init(const OdeHandle& odeHandle, double mass,
 
 void Disk::update() {
     if (mode & Draw && transformNode) {
-        const vsg::dmat4& mat = static_cast<const vsg::dmat4&>(getPose());
-        transformNode->matrix = mat;
+        try {
+            transformNode->matrix = getPose().getMatrix();
+        } catch (const std::exception& e) {
+            std::cerr << "Disk::update: " << e.what() << std::endl;
+        }
     }
 }
 
@@ -1186,17 +1184,17 @@ void Ray::setLength(float len) {
 
 void Ray::update() {
     if (mode & Draw && transformNode) {
-        // The ODE ray is defined starting at its position and extending along the geom's local Z axis.
-        // We have the line/box centered at the origin extending from -length/2 to +length/2.
-        // To make it start at the ray position and extend forward (0 to length), we translate it by length/2 along Z.
-        //
-        // getPose() gives the pose of the geom:
-        // Pose matrix transforms from local to world.
-        // Multiplying by a translation along Z moves the geometry forward in world space.
-        
-        vsg::dmat4 poseMat = getPose().getMatrix();
-        vsg::dmat4 translateMat = vsg::translate(0.0, 0.0, length * 0.5);
-        transformNode->matrix = translateMat * poseMat;
+        try {
+            // The ODE ray is defined starting at its position and extending along the geom's local Z axis.
+            // We have the line/box centered at the origin extending from -length/2 to +length/2.
+            // To make it start at the ray position and extend forward, we translate it by length/2 along Z.
+            
+            vsg::dmat4 poseMat = getPose().getMatrix();
+            vsg::dmat4 translateMat = vsg::translate(0.0, 0.0, length * 0.5);
+            transformNode->matrix = poseMat * translateMat;
+        } catch (const std::exception& e) {
+            std::cerr << "Error in Ray::update(): " << e.what() << std::endl;
+        }
     }
 }
 
@@ -1292,10 +1290,6 @@ void Mesh::init(const OdeHandle& odeHandle, double mass,
         // Here we simulate bounding shape. If bounding shape is not found,
         // fallback to a sphere:
         // In a real scenario, you'd implement a proper bounding shape loader.
-        std::string bboxfile = filename + ".bbox";
-        // Check if bounding shape file exists and load it if possible.
-        // For now, we assume not found, and fallback to sphere.
-        // A real implementation would read the file and create bounding primitives.
 
         // fallback bounding shape:
         if(!boundshape) {
@@ -1310,28 +1304,18 @@ void Mesh::init(const OdeHandle& odeHandle, double mass,
 
 void Mesh::update(){
     if (mode & Draw) {
-        vsg::dmat4 matrix;
-        if (body) {
-            // use ODE body pose
-            const dReal* pos = dBodyGetPosition(body);
-            const dReal* rot = dBodyGetRotation(body);
-            matrix = odeToVsgMatrix(pos, rot);
-        } else if (geom) {
-            // use ODE geom pose
-            const dReal* pos = dGeomGetPosition(geom);
-            const dReal* rot = dGeomGetRotation(geom);
-            matrix = odeToVsgMatrix(pos, rot);
-        } else {
-            // no body or geom, use stored pose
-            matrix = poseWithoutBodyAndGeom.getMatrix();
-        }
-
-        if (transformNode) {
-            transformNode->matrix = matrix;
-        }
-
-        if (boundshape) {
-            boundshape->setMatrix(matrix);
+        try {
+            vsg::dmat4 matrix = getPose().getMatrix();
+            
+            if (transformNode) {
+                transformNode->matrix = matrix;
+            }
+            
+            if (boundshape) {
+                boundshape->setMatrix(matrix);
+            }
+        } catch (const std::exception& e) {
+            std::cerr << "Mesh::update: " << e.what() << std::endl;
         }
     }
 }

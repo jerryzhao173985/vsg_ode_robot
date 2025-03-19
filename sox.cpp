@@ -145,10 +145,10 @@ void Sox::seth(const matrix::Matrix& _h){
 void Sox::step(const sensor* x_, int number_sensors,
                        motor* y_, int number_motors){
   stepNoLearning(x_, number_sensors, y_, number_motors);
-  // DEBUG: print x_ and y_ the array of doubles
-  for(int i = 0; i < number_sensors; i++){
-    std::cout << "x_[" << i << "] = " << x_[i] << " , y_[" << i << "] = " << y_[i] << std::endl;
-  }
+  // // DEBUG: print x_ and y_ the array of doubles
+  // for(int i = 0; i < number_sensors; i++){
+  //   std::cout << "x_[" << i << "] = " << x_[i] << " , y_[" << i << "] = " << y_[i] << std::endl;
+  // }
   if(t<=buffersize) return;
   t--; // stepNoLearning increases the time by one - undo here
 
