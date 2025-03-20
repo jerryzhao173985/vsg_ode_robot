@@ -1064,13 +1064,92 @@ vsg::ref_ptr<vsg::Node> createLines(const std::vector<vsg::dvec3>& points)
 }
 
 /******************************************************************************/
-// Helper function to create a simple line node
-// The line extends from -length/2 to +length/2 along the Z-axis.
-vsg::ref_ptr<vsg::Node> createLineNode(float length) {
+// Helper function to create a simple line node with better appearance
+// The line extends from origin (0,0,0) to (0,0,length) along the Z-axis.
+/******************************************************************************/
+vsg::ref_ptr<vsg::Node> createLineNode(float length, const vsg::vec4& color = vsg::vec4(1.0f, 1.0f, 0.0f, 1.0f)) {
     std::vector<vsg::dvec3> points;
-    points.push_back(vsg::dvec3(0.0, 0.0, -length * 0.5));
-    points.push_back(vsg::dvec3(0.0, 0.0,  length * 0.5));
-    return createLines(points);
+    points.push_back(vsg::dvec3(0.0, 0.0, 0.0));  // Start at origin
+    points.push_back(vsg::dvec3(0.0, 0.0, length)); // Extend along Z-axis
+    
+    // Create vertex array
+    auto vertices = vsg::vec3Array::create(points.size());
+    
+    // Create normals array (required by flat shaded shader)
+    auto normals = vsg::vec3Array::create(points.size());
+    
+    // Create texture coordinates array (required by flat shaded shader)
+    auto texcoords = vsg::vec2Array::create(points.size());
+    
+    // Create colors array
+    auto colors = vsg::vec4Array::create(points.size());
+
+    // Fill arrays
+    for (size_t i = 0; i < points.size(); ++i) {
+        vertices->set(i, vsg::vec3(points[i].x, points[i].y, points[i].z));
+        normals->set(i, vsg::vec3(0.0f, 0.0f, 1.0f));  // Default normal pointing in Z direction
+        texcoords->set(i, vsg::vec2(0.0f, 0.0f));      // Default texture coordinates
+        colors->set(i, color);                          // Use provided color
+    }
+
+    // Create the vertex index draw
+    auto drawCommand = vsg::VertexIndexDraw::create();
+    
+    // Assign arrays - order matters and must match the shader expectations
+    vsg::DataList arrays;
+    arrays.push_back(vertices);   // location = 0
+    arrays.push_back(normals);    // location = 1
+    arrays.push_back(texcoords);  // location = 2
+    arrays.push_back(colors);     // location = 3
+    drawCommand->assignArrays(arrays);
+    
+    // Create indices for LINE_STRIP
+    auto indices = vsg::ushortArray::create(points.size());
+    for (size_t i = 0; i < points.size(); ++i) {
+        indices->set(i, static_cast<uint16_t>(i));
+    }
+    drawCommand->assignIndices(indices);
+    drawCommand->indexCount = static_cast<uint32_t>(indices->size());
+    drawCommand->instanceCount = 1;
+
+    // Create shader set and pipeline configurator
+    auto shaderSet = vsg::createFlatShadedShaderSet();
+    auto pipelineConfig = vsg::GraphicsPipelineConfigurator::create(shaderSet);
+
+    // Enable required arrays with correct strides
+    pipelineConfig->enableArray("vsg_Vertex", VK_VERTEX_INPUT_RATE_VERTEX, sizeof(vsg::vec3));
+    pipelineConfig->enableArray("vsg_Normal", VK_VERTEX_INPUT_RATE_VERTEX, sizeof(vsg::vec3));
+    pipelineConfig->enableArray("vsg_TexCoord0", VK_VERTEX_INPUT_RATE_VERTEX, sizeof(vsg::vec2));
+    pipelineConfig->enableArray("vsg_Color", VK_VERTEX_INPUT_RATE_VERTEX, sizeof(vsg::vec4));
+
+    // Configure pipeline states
+    struct SetPipelineStates : public vsg::Visitor
+    {
+        void apply(vsg::Object& object) override { object.traverse(*this); }
+        
+        void apply(vsg::InputAssemblyState& ias) override 
+        {
+            ias.topology = VK_PRIMITIVE_TOPOLOGY_LINE_STRIP;
+        }
+        
+        void apply(vsg::RasterizationState& rs) override
+        {
+            rs.cullMode = VK_CULL_MODE_NONE;
+            rs.lineWidth = 2.0f;  // Make lines thicker for better visibility
+        }
+    } sps;
+    
+    pipelineConfig->accept(sps);
+    
+    // Initialize the pipeline configuration
+    pipelineConfig->init();
+
+    // Create state group and assign pipeline
+    auto stateGroup = vsg::StateGroup::create();
+    pipelineConfig->copyTo(stateGroup);
+    stateGroup->addChild(drawCommand);
+
+    return stateGroup;
 }
 
 // ---------------- Ray Implementation ----------------------------------------
@@ -1094,16 +1173,20 @@ void Ray::init(const OdeHandle& odeHandle, double mass,
         substance = odeHandle.substance;
     this->mode = mode;
 
-    // Create the ODE ray
+    // Create the ODE ray - this is the physics representation
+    // ODE rays extend along their local +Z axis from the ray's origin
     geom = dCreateRay(odeHandle.space, range);
     attachGeomAndSetColliderFlags();
 
     if (mode & Draw) {
         // If thickness == 0, use a line; else use a box to visualize the ray
         vsg::ref_ptr<vsg::Node> shapeNode;
+        
+        // Length of the visualization initially matches the range
+        // This will be updated when collisions are detected
         if (thickness == 0.0f) {
-            // Create a line visualization
-            shapeNode = createLineNode(length);
+            // Create a line visualization with yellow color
+            shapeNode = createLineNode(range, vsg::vec4(1.0f, 1.0f, 0.0f, 1.0f));
         } else {
             // Create a box visualization
             vsg::Builder builder;
@@ -1112,15 +1195,18 @@ void Ray::init(const OdeHandle& odeHandle, double mass,
             vsg::GeometryInfo geomInfo;
             float dx = thickness * 0.5f;
             float dy = thickness * 0.5f;
-            float dz = length * 0.5f;
-            geomInfo.position = {0.0f, 0.0f, 0.0f};  
+            float dz = range * 0.5f;  // Initially use range for length
+            
+            // Position the box so its bottom is at the origin (ray start)
+            // and it extends along +Z axis
+            geomInfo.position = {0.0f, 0.0f, dz};
             geomInfo.dx = {dx, 0.0f, 0.0f};
             geomInfo.dy = {0.0f, dy, 0.0f};
             geomInfo.dz = {0.0f, 0.0f, dz};
             geomInfo.color = vsg::vec4(1.0f, 1.0f, 0.0f, 1.0f); // Yellow
 
             vsg::StateInfo state;
-            state.lighting = false;  // Disable lighting for a simple flat color
+            state.lighting = false;
             shapeNode = builder.createBox(geomInfo, state);
         }
 
@@ -1140,58 +1226,105 @@ void Ray::init(const OdeHandle& odeHandle, double mass,
         if (vsgHandle.parent) {
             vsgHandle.parent->addChild(transformNode);
         }
+        
+        // Initialize length to range
+        this->length = range;
     }
 }
 
 void Ray::setLength(float len) {
+    // Don't allow a length greater than range or less than 0
+    len = std::max(0.0f, std::min(len, static_cast<float>(range)));
+    
+    if (std::abs(length - len) < 0.001f) {
+        // No significant change in length, skip rebuilding
+        return;
+    }
+    
     length = len;
-    if (mode & Draw) {
-        // Rebuild the geometry with the new length
+    
+    if (!((mode & Draw) && transformNode)) {
+        return; // Nothing to update if not drawing
+    }
+    
+    try {
+        // Create a new shape with the updated length
         vsg::ref_ptr<vsg::Node> newShape;
+        
         if (thickness == 0.0f) {
-            // Line mode
-            newShape = createLineNode(length);
+            // Line mode - create new line with updated length
+            newShape = createLineNode(length, vsg::vec4(1.0f, 1.0f, 0.0f, 1.0f));
         } else {
-            // Box mode
+            // Box mode - create new box with updated dimensions
             vsg::Builder builder;
-            builder.options = options; // use VSG options
+            builder.options = options;
 
             float dx = thickness * 0.5f;
             float dy = thickness * 0.5f;
             float dz = length * 0.5f;
 
             vsg::GeometryInfo geomInfo;
-            geomInfo.position = {0.0f, 0.0f, 0.0f};  
+            geomInfo.position = {0.0f, 0.0f, dz};  // Center along ray direction
             geomInfo.dx = {dx, 0.0f, 0.0f};
             geomInfo.dy = {0.0f, dy, 0.0f};
             geomInfo.dz = {0.0f, 0.0f, dz};
             geomInfo.color = vsg::vec4(1.0f, 1.0f, 0.0f, 1.0f); // Yellow
 
             vsg::StateInfo state;
-            state.lighting = false;  
+            state.lighting = false;
             newShape = builder.createBox(geomInfo, state);
         }
-
-        // Replace old primitive with new one
-        if (transformNode && vsgPrimitive) {
-            // TODO: Need to properly delete the old primitive
-            // transformNode->removeChild(vsgPrimitive);
-            vsgPrimitive = newShape;
-            transformNode->addChild(vsgPrimitive);
+        
+        // We need to replace the vsgPrimitive in the transform node
+        // First remove current vsgPrimitive
+        for (size_t i = 0; i < transformNode->children.size(); ++i) {
+            if (transformNode->children[i] == vsgPrimitive) {
+                transformNode->children.erase(transformNode->children.begin() + i);
+                break;
+            }
         }
+        
+        // Store new shape as the primitive
+        vsgPrimitive = newShape;
+        
+        // Add the new shape to the transform
+        transformNode->addChild(vsgPrimitive);
+        
+    } catch (const std::exception& e) {
+        std::cerr << "Error in Ray::setLength(): " << e.what() << std::endl;
     }
 }
+
+// This function adjusts the color of the ray based on its length
+// Useful for visualizing sensor readings - shorter rays (closer objects) will be more red
+void Ray::setColorForLength(float len) {
+    if (!(mode & Draw) || !vsgPrimitive) {
+        return;
+    }
+    
+    // Calculate color based on length - red for close objects, yellow for distant
+    float normalizedLength = static_cast<float>(len / range);
+    vsg::vec4 rayColor(1.0f, normalizedLength, 0.0f, 1.0f);  // Red-to-yellow gradient
+    
+    // Update color of the primitive
+    ChangeColor changeColorVisitor(rayColor);
+    vsgPrimitive->accept(changeColorVisitor);
+    
+    color = Color(rayColor.x, rayColor.y, rayColor.z, rayColor.w);
+}
+
 
 void Ray::update() {
     if (mode & Draw && transformNode) {
         try {
-            // The ODE ray is defined starting at its position and extending along the geom's local Z axis.
-            // We have the line/box centered at the origin extending from -length/2 to +length/2.
-            // To make it start at the ray position and extend forward, we translate it by length/2 along Z.
-            
+            // The ODE ray starts at its position and extends along Z-axis
+            // Get the ray's pose (position and orientation in world space)
             vsg::dmat4 poseMat = getPose().getMatrix();
-            vsg::dmat4 translateMat = vsg::translate(0.0, 0.0, length * 0.5);
-            transformNode->matrix = poseMat * translateMat;
+            
+            // Set the transform's matrix to position the ray correctly
+            // No additional translation needed; the ray visualization is already
+            // aligned properly in local space
+            transformNode->matrix = poseMat;
         } catch (const std::exception& e) {
             std::cerr << "Error in Ray::update(): " << e.what() << std::endl;
         }
@@ -1203,6 +1336,32 @@ void Ray::setMass(double mass, bool density) {
     // This function is not applicable, but provided for interface completeness.
 }
 
+// Get the current length of the ray
+double Ray::getLength() const {
+    return length;
+}
+
+// Get the maximum range of the ray
+double Ray::getRange() const {
+    return range;
+}
+
+// Print debug information about the ray
+void Ray::printDebugInfo() const {
+    std::cout << "Ray Debug Info:" << std::endl;
+    std::cout << "  Range: " << range << std::endl;
+    std::cout << "  Length: " << length << std::endl;
+    std::cout << "  Thickness: " << thickness << std::endl;
+    std::cout << "  Has Geom: " << (geom != nullptr) << std::endl;
+    std::cout << "  Has Transform: " << (transformNode != nullptr) << std::endl;
+    std::cout << "  Has Primitive: " << (vsgPrimitive != nullptr) << std::endl;
+    
+    // Print position information if available
+    if (geom) {
+        const dReal* pos = dGeomGetPosition(geom);
+        std::cout << "  Position: (" << pos[0] << ", " << pos[1] << ", " << pos[2] << ")" << std::endl;
+    }
+}
 
 /**********************************************************************
  * Mesh Implementation

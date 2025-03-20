@@ -80,6 +80,12 @@ namespace lpzrobots {
 
         /// Initialization of the structure
         void init();
+
+        /// Set up lighting in the scene
+        void setupLighting(const vsg::dvec3& direction = vsg::dvec3(0.0, 0.0, -1.0), 
+                           const vsg::vec4& color = vsg::vec4(1.0, 1.0, 1.0, 1.0));
+                           
+                           
         /// Set up robot camera manager (must be called after init but before usage of the structure)
         // void setup(int windowW, int windowH);
         /// Deletes all internal variables

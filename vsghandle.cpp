@@ -80,18 +80,19 @@ namespace lpzrobots {
         if (hasBeenClosed) return;
         hasBeenClosed = true;
         
-        std::cout << "VsgHandle::close() - Starting cleanup" << std::endl;
-        
+        // Clear parent reference first
         if (parent.valid()) {
             parent = nullptr;
         }
         
+        // Then clear the scene (which cleans up all VSG nodes)
         if (scene) {
             scene->clear();
             delete scene;
             scene = nullptr;
         }
 
+        // Finally clear the configuration
         if (cfg) {
             if (cfg->cs) {
                 delete cfg->cs;
@@ -102,8 +103,6 @@ namespace lpzrobots {
             delete cfg;
             cfg = nullptr;
         }
-        
-        std::cout << "VsgHandle::close() - Cleanup complete" << std::endl;
     }
 
 
@@ -196,43 +195,75 @@ namespace lpzrobots {
 
     void VsgScene::clear() {
         if (!root && !world && !scene) {
-            std::cout << "VsgScene::clear() called, but already cleared.\n";
-            return;
+            return; // Already cleared
         }
 
-        std::cout << "VsgScene::clear() - Starting clear" << std::endl;
+        // Clear scene first (bottom-up cleanup)
         if (scene) {
             if (auto sceneGroup = scene.cast<vsg::Group>()) {
                 sceneGroup->children.clear();
             }
             scene = nullptr;
-            std::cout << "  Cleared scene" << std::endl;
         }
 
-        // Same for world
+        // Clear world
         if (world) {
             if (auto worldGroup = world.cast<vsg::Group>()) {
                 worldGroup->children.clear();
             }
             world = nullptr;
-            std::cout << "  Cleared world" << std::endl;
         }
 
-        // Same for root
+        // Clear root
         if (root) {
             if (auto rootGroup = root.cast<vsg::Group>()) {
                 rootGroup->children.clear();
             }
             root = nullptr;
-            std::cout << "  Cleared root" << std::endl;
         }
 
-        std::cout << "VsgScene::clear() - Done" << std::endl;
+        // Clear ground scene
+        groundScene = nullptr;
+        
+        // Clear lighting
+        lightSource = nullptr;
+        
+        // Clear world transform
+        worldTransform = nullptr;
     }
 
 
     bool VsgScene::isValid() const {
         return root.valid() && world.valid() && scene.valid();
+    }
+
+    void VsgHandle::setupLighting(const vsg::dvec3& direction, const vsg::vec4& color) {
+        if (!scene || !scene->world) {
+            std::cerr << "VsgHandle::setupLighting: Scene not initialized, call init() first" << std::endl;
+            return;
+        }
+        
+        // Create a directional light
+        auto light = vsg::DirectionalLight::create();
+        light->name = "main_light";
+        light->intensity = 1.0f;
+        light->direction = vsg::normalize(direction);
+        
+        // Set the color (handle differently to avoid type errors)
+        light->color.set(color.x, color.y, color.z); // Only use RGB components
+        
+        // Create a transform for the light
+        auto lightTransform = vsg::MatrixTransform::create();
+        lightTransform->matrix = vsg::lookAt(vsg::dvec3(0.0, 0.0, 0.0), direction, vsg::dvec3(0.0, 1.0, 0.0));
+        
+        // Add the light to the transform
+        lightTransform->addChild(light);
+        
+        // Add the light transform to the world
+        scene->world->addChild(lightTransform);
+        
+        // Store the light for later access
+        scene->lightSource = light;
     }
 
 }

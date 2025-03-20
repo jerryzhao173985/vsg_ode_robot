@@ -102,44 +102,53 @@ namespace lpzrobots {
      * rear left
      * left  middle
     */
-    RaySensorBank* irSensorBank = new RaySensorBank();
-    irSensorBank->setInitData(odeHandle, vsgHandle, vsg::translate(0.0,0.0,0.0));
-    if (conf.irFront){ // add front left and front right infrared sensor to sensorbank if required
-      for(int i=-1; i<2; i+=2){
-        IRSensor* sensor = new IRSensor();
-        irSensorBank->registerSensor(sensor, objects[0],
-                                    vsg::translate(0.0,-i*width/10,length/2 + width/2 - width/60 ) *
-                                    vsg::rotate(i*M_PI/10, vsg::dvec3(1,0,0)),
-                                    conf.irRangeFront, RaySensor::drawAll);
+    if (conf.irFront || conf.irSide || conf.irBack) {
+      // Create sensor bank using std::shared_ptr for automatic memory management
+      auto irSensorBank = std::make_shared<RaySensorBank>();
+      irSensorBank->setInitData(odeHandle, vsgHandle, vsg::translate(0.0,0.0,0.0));
+      
+      if (conf.irFront) { // add front left and front right infrared sensors
+        for(int i=-1; i<2; i+=2){
+          // Create an IR sensor with proper exponent (2.0) for realistic IR behavior
+          IRSensor* sensor = new IRSensor(2.0, width/20.0, conf.irRangeFront, RaySensor::drawAll);
+          // Position sensor at front of robot with appropriate angle
+          irSensorBank->registerSensor(sensor, objects[0],
+                            vsg::translate(0.0, -i*width/10, length/2 + width/2 - width/60) *
+                            vsg::rotate(i*M_PI/10, vsg::dvec3(1,0,0)),
+                            conf.irRangeFront, RaySensor::drawAll);
+        }
       }
-    }
-    if (conf.irSide){ // add right infrared sensor to sensorbank if required
-      IRSensor* sensor = new IRSensor();
-      irSensorBank->registerSensor(sensor, objects[0],
-                                  //vsg::rotate(i*M_PI/2, vsg::dvec3(0,0,1)) *
-                                  vsg::translate(0.0,-width/2, 0.0 ) *
-                                  vsg::rotate(M_PI/2, vsg::dvec3(1,0,0)),
-                                  conf.irRangeSide, RaySensor::drawAll);
-    }
-    if (conf.irBack){ // add rear right and rear left infrared sensor to sensorbank if required
-      for(int i=-1; i<2; i+=2){
-        IRSensor* sensor = new IRSensor();
+      
+      if (conf.irSide) { // add right side and left side IR sensors
+        // Right side sensor
+        IRSensor* sensor = new IRSensor(2.0, width/20.0, conf.irRangeSide, RaySensor::drawAll);
         irSensorBank->registerSensor(sensor, objects[0],
-                                    vsg::translate(0.0,i*width/10,-(length/2 + width/2 - width/60) )*
-                                    vsg::rotate(i*M_PI, vsg::dvec3(0,1,0)) *
-                                    vsg::rotate(-i*M_PI/10, vsg::dvec3(1,0,0)),
-                                    conf.irRangeBack, RaySensor::drawAll);
+                          vsg::translate(0.0, -width/2, 0.0) *
+                          vsg::rotate(M_PI/2, vsg::dvec3(1,0,0)),
+                          conf.irRangeSide, RaySensor::drawAll);
+                          
+        // Left side sensor
+        sensor = new IRSensor(2.0, width/20.0, conf.irRangeSide, RaySensor::drawAll);
+        irSensorBank->registerSensor(sensor, objects[0],
+                          vsg::translate(0.0, width/2, 0.0) *
+                          vsg::rotate(-M_PI/2, vsg::dvec3(1,0,0)), 
+                          conf.irRangeSide, RaySensor::drawAll);
       }
+      
+      if (conf.irBack) { // add rear right and rear left infrared sensors
+        for(int i=-1; i<2; i+=2){
+          IRSensor* sensor = new IRSensor(2.0, width/20.0, conf.irRangeBack, RaySensor::drawAll);
+          irSensorBank->registerSensor(sensor, objects[0],
+                          vsg::translate(0.0, i*width/10, -(length/2 + width/2 - width/60)) *
+                          vsg::rotate(i*M_PI, vsg::dvec3(0,1,0)) *
+                          vsg::rotate(-i*M_PI/10, vsg::dvec3(1,0,0)),
+                          conf.irRangeBack, RaySensor::drawAll);
+        }
+      }
+      
+      // Add the sensor bank to the robot
+      addSensor(irSensorBank);
     }
-    if (conf.irSide){ // add left infrared sensor to sensorbank if required
-        IRSensor* sensor = new IRSensor();
-        irSensorBank->registerSensor(sensor, objects[0],
-                                    //vsg::rotate(i*M_PI/2, vsg::dvec3(0,0,1)) *
-                                    vsg::translate(0.0,width/2, 0.0) *
-                                    vsg::rotate(-M_PI/2, vsg::dvec3(1,0,0)), 
-                                    conf.irRangeSide, RaySensor::drawAll);
-    }
-    addSensor(shared_ptr<Sensor>(irSensorBank));
   };
 
 

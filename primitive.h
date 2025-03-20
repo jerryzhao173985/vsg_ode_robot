@@ -342,6 +342,30 @@ namespace lpzrobots {
 
         void setLength(float len);
 
+        /**
+         * Sets the color of the ray based on its length
+         * Useful for visualizing sensor readings - shorter rays (closer objects) will be more red
+         * @param len Length to use for coloring (typically current measured length)
+         */
+        void setColorForLength(float len);
+
+        /**
+         * Get the current length of the ray visualization
+         * @return Current length of the ray
+         */
+        double getLength() const;
+
+        /**
+         * Get the maximum range of the ray
+         * @return Maximum range of the ray
+         */
+        double getRange() const;
+
+        /**
+         * Print debug information about the ray to standard output
+         */
+        void printDebugInfo() const;
+
         virtual void update();
 
         virtual void setMass(double mass, bool density = false);

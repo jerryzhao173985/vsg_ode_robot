@@ -487,6 +487,10 @@ OdeAgent* createVehicle(const OdeHandle& odeHandle, const VsgHandle& vsgHandle,
         conf.force = 5.0;
         conf.speed = 15.0;
         conf.size = 1.0;
+        // conf.irFront = true;
+        // conf.irBack = true;
+        // conf.irSide = true;
+        // conf.irRangeFront = 3.0;
         conf.wheelSubstance.toRubber(40);  // Better wheels traction
         
         // Place the robot at a safe height above ground
