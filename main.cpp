@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <chrono>
 #include <iostream>
+#include <iomanip>
 #include <thread>
 #include <memory>
 #include <vector>
@@ -353,20 +354,60 @@ void simulateStep(OdeHandle& odeHandle, double timestep) {
 
 // Function to display sensor information for debugging and monitoring
 void displaySensorInfo(const OdeAgent* agent, int frameCount) {
-    // Display sensor info every 100 frames to avoid spam
-    if (frameCount % 100 == 0 && agent && agent->getRobot()) {
+    // Display sensor info every 200 frames to avoid spam but show meaningful data
+    if (frameCount % 200 == 0 && agent && agent->getRobot()) {
         const OdeRobot* robot = agent->getRobot();
         int sensorCount = robot->getSensorNumber();
         
         if (sensorCount > 4) {  // More than just wheel sensors
-            std::cout << "\n=== Sensor-Equipped Robot Status (Frame " << frameCount << ") ===" << std::endl;
+            std::cout << "\n=== Enhanced Robot Status (Frame " << frameCount << ") ===" << std::endl;
             std::cout << "Robot: " << robot->getName() << std::endl;
-            std::cout << "Total sensors: " << sensorCount << std::endl;
+            std::cout << "Total sensors: " << sensorCount << " (4 wheel + " << (sensorCount-4) << " IR sensors)" << std::endl;
+            
+            // Get all sensor values
+            std::vector<double> sensors(sensorCount);
+            robot->getSensors(sensors.data(), sensorCount);
+            
+            std::cout << "Wheel speeds: [";
+            for (int i = 0; i < 4 && i < sensorCount; i++) {
+                std::cout << std::fixed << std::setprecision(2) << sensors[i];
+                if (i < 3) std::cout << ", ";
+            }
+            std::cout << "]" << std::endl;
+            
+            if (sensorCount > 4) {
+                std::cout << "IR sensors: [";
+                for (int i = 4; i < sensorCount; i++) {
+                    std::cout << std::fixed << std::setprecision(2) << sensors[i];
+                    if (i < sensorCount-1) std::cout << ", ";
+                }
+                std::cout << "]" << std::endl;
+                
+                // Check for active detections
+                bool hasDetection = false;
+                for (int i = 4; i < sensorCount; i++) {
+                    if (sensors[i] > 0.3) {
+                        hasDetection = true;
+                        break;
+                    }
+                }
+                std::cout << "Obstacle detection: " << (hasDetection ? "ACTIVE" : "clear") << std::endl;
+            }
+            
             std::cout << "Position: "; 
             robot->getPosition().print();
-            std::cout << "Expected sensors: 4 wheel sensors + IR sensors (front, back, side)" << std::endl;
-            std::cout << "IR sensors should detect obstacles within range for navigation" << std::endl;
-            std::cout << "======================================================\n" << std::endl;
+            
+            // Show obstacle avoidance statistics if available
+            FourWheeled* fourWheeled = dynamic_cast<FourWheeled*>(const_cast<OdeRobot*>(robot));
+            if (fourWheeled) {
+                auto stats = fourWheeled->getAvoidanceStats();
+                double avoidanceRate = (stats.second > 0) ? (100.0 * stats.first / stats.second) : 0.0;
+                std::cout << "Avoidance activations: " << stats.first << "/" << stats.second 
+                          << " (" << std::fixed << std::setprecision(1) << avoidanceRate << "%)" << std::endl;
+            }
+            
+            std::cout << "Features: IR sensors + obstacle avoidance reflexes + Sox learning" << std::endl;
+            std::cout << "========================================================\n" << std::endl;
         }
     }
 }
@@ -766,25 +807,60 @@ int main(int argc, char** argv)
         // Add some obstacles for the IR sensors to detect
         std::vector<Box*> obstacles;
         
-        // Create a few obstacles for sensor testing
-        for (int i = 0; i < 3; i++) {
-            Box* obstacle = new Box(0.3, 0.3, 0.6);  // Small vertical obstacles
-            obstacle->init(odeHandle, 0.0, vsgHandle.changeColor(0.8, 0.2, 0.2), Primitive::Geom | Primitive::Draw);
+        // Create varied obstacles for comprehensive sensor testing
+        for (int i = 0; i < 4; i++) {
+            Box* obstacle;
+            Color obstacleColor;
+            double obstacleHeight;
             
-            // Position obstacles at different locations
-            double x = (i - 1) * 1.5;  // Spread obstacles along X axis
-            double y = 1.5 + i * 0.5;  // Offset in Y direction
-            obstacle->setPose(vsg::translate(x, y, 0.3));  // Place on ground
+            // Create different types of obstacles
+            switch(i) {
+                case 0: // Tall thin obstacle
+                    obstacle = new Box(0.2, 0.2, 1.0);
+                    obstacleColor = Color(0.9, 0.1, 0.1);  // Bright red
+                    obstacleHeight = 0.5;
+                    break;
+                case 1: // Wide low obstacle  
+                    obstacle = new Box(0.6, 0.6, 0.3);
+                    obstacleColor = Color(0.1, 0.8, 0.1);  // Bright green
+                    obstacleHeight = 0.15;
+                    break;
+                case 2: // Medium obstacle
+                    obstacle = new Box(0.4, 0.4, 0.6);
+                    obstacleColor = Color(0.8, 0.6, 0.1);  // Orange
+                    obstacleHeight = 0.3;
+                    break;
+                case 3: // Small obstacle
+                    obstacle = new Box(0.25, 0.25, 0.4);
+                    obstacleColor = Color(0.6, 0.1, 0.8);  // Purple
+                    obstacleHeight = 0.2;
+                    break;
+            }
             
-            // Set obstacle material properties
+            obstacle->init(odeHandle, 0.0, vsgHandle.changeColor(obstacleColor.r, obstacleColor.g, obstacleColor.b), 
+                          Primitive::Geom | Primitive::Draw);
+            
+            // Position obstacles in a more interesting pattern
+            double angle = i * M_PI / 2;  // 90 degrees apart
+            double distance = 2.0 + i * 0.3;  // Varying distances
+            double x = distance * cos(angle);
+            double y = distance * sin(angle);
+            
+            obstacle->setPose(vsg::translate(x, y, obstacleHeight));
+            
+            // Set varied material properties
             Substance obstacleSubstance;
-            obstacleSubstance.toPlastic(30);  // Hard plastic obstacles
+            switch(i % 3) {
+                case 0: obstacleSubstance.toPlastic(35); break;
+                case 1: obstacleSubstance.toRubber(25); break;
+                case 2: obstacleSubstance.toMetal(0.8, 0.4); break;
+            }
             obstacle->setSubstance(obstacleSubstance);
             
             obstacles.push_back(obstacle);
         }
         
-        std::cout << "Created " << obstacles.size() << " test obstacles for IR sensor testing" << std::endl;
+        std::cout << "Created " << obstacles.size() << " varied test obstacles with different materials and sizes" << std::endl;
 
         // GlobalData global;
         global.vsgHandle = vsgHandle;
