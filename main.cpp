@@ -254,11 +254,15 @@ void nearCallback(void *data, dGeomID o1, dGeomID o2) {
         if (callbackrv == 1) {
             Substance::getSurfaceParams(surfParams, s1, s2, global.odeConfig.simStepSize);
             
-            // Add additional parameters for stability
-            surfParams.bounce = 0.1;       // Slight bounce for realism
-            surfParams.bounce_vel = 0.1;   // Minimum velocity for bounce
-            surfParams.soft_cfm = 0.01;    // Soft constraint force mixing
-            surfParams.soft_erp = 0.2;     // Soft error reduction
+            // Enhanced contact parameters for better sensor-obstacle interaction
+            surfParams.bounce = 0.05;      // Minimal bounce for realistic contact
+            surfParams.bounce_vel = 0.05;  // Low velocity threshold for bounce
+            surfParams.soft_cfm = 0.008;   // Optimized for sensor feedback
+            surfParams.soft_erp = 0.25;    // Good error reduction for stable contact
+            
+            // Add friction for better robot-obstacle interaction
+            surfParams.mu = 0.8;           // Good friction coefficient
+            surfParams.mu2 = 0.8;          // Equal friction in all directions
         }
         
         if (callbackrv == 0) return;
@@ -345,6 +349,26 @@ void simulateStep(OdeHandle& odeHandle, double timestep) {
     
     // Update simulation time
     *odeHandle.time += timestep;
+}
+
+// Function to display sensor information for debugging and monitoring
+void displaySensorInfo(const OdeAgent* agent, int frameCount) {
+    // Display sensor info every 100 frames to avoid spam
+    if (frameCount % 100 == 0 && agent && agent->getRobot()) {
+        const OdeRobot* robot = agent->getRobot();
+        int sensorCount = robot->getSensorNumber();
+        
+        if (sensorCount > 4) {  // More than just wheel sensors
+            std::cout << "\n=== Sensor-Equipped Robot Status (Frame " << frameCount << ") ===" << std::endl;
+            std::cout << "Robot: " << robot->getName() << std::endl;
+            std::cout << "Total sensors: " << sensorCount << std::endl;
+            std::cout << "Position: "; 
+            robot->getPosition().print();
+            std::cout << "Expected sensors: 4 wheel sensors + IR sensors (front, back, side)" << std::endl;
+            std::cout << "IR sensors should detect obstacles within range for navigation" << std::endl;
+            std::cout << "======================================================\n" << std::endl;
+        }
+    }
 }
 
 void createNewDir(const char* base, char *newdir) {
@@ -487,10 +511,15 @@ OdeAgent* createVehicle(const OdeHandle& odeHandle, const VsgHandle& vsgHandle,
         conf.force = 5.0;
         conf.speed = 15.0;
         conf.size = 1.0;
-        // conf.irFront = true;
-        // conf.irBack = true;
-        // conf.irSide = true;
-        // conf.irRangeFront = 3.0;
+        
+        // Enable IR sensors for obstacle detection and navigation
+        conf.irFront = true;        // Front sensors for forward obstacle detection
+        conf.irBack = true;         // Rear sensors for backward movement
+        conf.irSide = true;         // Side sensors for comprehensive environment awareness
+        conf.irRangeFront = 3.0;    // Extended range for forward planning
+        conf.irRangeBack = 2.0;     // Moderate range for backing up
+        conf.irRangeSide = 2.5;     // Good side awareness range
+        
         conf.wheelSubstance.toRubber(40);  // Better wheels traction
         
         // Place the robot at a safe height above ground
@@ -499,17 +528,23 @@ OdeAgent* createVehicle(const OdeHandle& odeHandle, const VsgHandle& vsgHandle,
         
         // Create the robot with proper configuration
         FourWheeled* robot = new FourWheeled(odeHandle, vsgHandle, conf, name);
-        robot->setColor(Color(.1,.1,.8));
+        // Enhanced visual appearance - distinctive blue color for sensor-enabled robot
+        robot->setColor(Color(0.2, 0.4, 0.9));  // Bright blue to indicate advanced capabilities
         robot->place(adjustedPose);
         
-        // Configure controller with appropriate parameters
+        // Configure controller with appropriate parameters for sensor-rich robot
         SoxConf sc = Sox::getDefaultConf();
         sc.steps4Averaging = 2;  // More smoothing for better stability
+        sc.modelInit = 1.0;      // Initial model weight for better adaptation
         AbstractController* controller = new Sox(sc);
-        controller->setParam("epsC", 0.03);
-        controller->setParam("epsA", 0.01);
-        controller->setParam("discountS", 0.95);
-        controller->setParam("discountA", 0.95);
+        controller->setParam("epsC", 0.02);        // Lower learning rate for more stable control with sensors
+        controller->setParam("epsA", 0.008);       // Reduced model learning rate for sensor integration
+        controller->setParam("discountS", 0.98);   // Higher discount for sensor state learning
+        controller->setParam("discountA", 0.95);   // Action discount for motor learning
+        controller->setParam("s4avg", 2);          // More averaging for sensor noise reduction
+        controller->setParam("s4delay", 1);        // Sensor delay compensation
+        controller->setParam("harmony", 0.0);      // Deterministic behavior for obstacle navigation
+        controller->setParam("epsC", 0.03);        // Final controller learning rate
         global.configs.push_back(controller);
         
         // Set up wiring and agent
@@ -553,25 +588,26 @@ void configureRobotPhysics(OdeHandle& odeHandle) {
     // Earth gravity
     dWorldSetGravity(odeHandle.world, 0, 0, -9.81);
     
+    // Enhanced physics parameters for sensor-equipped robots
     // Error reduction parameter (how aggressively to correct joint errors)
-    dWorldSetERP(odeHandle.world, 0.3);  // Increased from 0.2 for better joint stability
+    dWorldSetERP(odeHandle.world, 0.25);  // Slightly higher for better joint stability with sensors
     
     // Constraint force mixing (softness of constraints)
-    dWorldSetCFM(odeHandle.world, 1e-6); // Slightly harder constraints for stability
+    dWorldSetCFM(odeHandle.world, 1e-6); // Harder constraints for sensor accuracy
     
     // Maximum correcting velocity for contacts
-    dWorldSetContactMaxCorrectingVel(odeHandle.world, 100.0); // Increased for better collision response
+    dWorldSetContactMaxCorrectingVel(odeHandle.world, 80.0); // Optimized for sensor response
     
     // Depth of contact surface layer
-    dWorldSetContactSurfaceLayer(odeHandle.world, 0.001);
+    dWorldSetContactSurfaceLayer(odeHandle.world, 0.0008); // Slightly reduced for better precision
     
     // Solver iterations - more iterations = more accurate but slower
-    dWorldSetQuickStepNumIterations(odeHandle.world, 50); // Increased for better accuracy
+    dWorldSetQuickStepNumIterations(odeHandle.world, 40); // Balanced for sensor-motor coordination
     
-    // Global damping for stability
-    dWorldSetLinearDamping(odeHandle.world, 0.005);  // Reduced for more natural movement
-    dWorldSetAngularDamping(odeHandle.world, 0.005); // Reduced for more natural rotation
-    dWorldSetAutoDisableFlag(odeHandle.world, 0);    // Don't auto-disable bodies
+    // Global damping for stability with sensor feedback
+    dWorldSetLinearDamping(odeHandle.world, 0.004);  // Slightly reduced for more responsive movement
+    dWorldSetAngularDamping(odeHandle.world, 0.006); // Slightly higher for rotational stability
+    dWorldSetAutoDisableFlag(odeHandle.world, 0);    // Keep active for continuous sensor operation
 }
 
 void createGroundPlane(OdeHandle& odeHandle) {
@@ -727,35 +763,73 @@ int main(int argc, char** argv)
         // Parameters: odeHandle, vsgHandle, arenaSize (20.0), wallHeight (3.0)
         std::vector<Box*> boundaryWalls = addBoundaryWalls(odeHandle, vsgHandle, 5.0, 2.0);
 
+        // Add some obstacles for the IR sensors to detect
+        std::vector<Box*> obstacles;
+        
+        // Create a few obstacles for sensor testing
+        for (int i = 0; i < 3; i++) {
+            Box* obstacle = new Box(0.3, 0.3, 0.6);  // Small vertical obstacles
+            obstacle->init(odeHandle, 0.0, vsgHandle.changeColor(0.8, 0.2, 0.2), Primitive::Geom | Primitive::Draw);
+            
+            // Position obstacles at different locations
+            double x = (i - 1) * 1.5;  // Spread obstacles along X axis
+            double y = 1.5 + i * 0.5;  // Offset in Y direction
+            obstacle->setPose(vsg::translate(x, y, 0.3));  // Place on ground
+            
+            // Set obstacle material properties
+            Substance obstacleSubstance;
+            obstacleSubstance.toPlastic(30);  // Hard plastic obstacles
+            obstacle->setSubstance(obstacleSubstance);
+            
+            obstacles.push_back(obstacle);
+        }
+        
+        std::cout << "Created " << obstacles.size() << " test obstacles for IR sensor testing" << std::endl;
+
         // GlobalData global;
         global.vsgHandle = vsgHandle;
-        auto agent = createVehicle(odeHandle, vsgHandle, global, 
-                    vsg::translate(0.0, 0.0, 0.0), 4 /*FourWheeled*/);
-        TrackRobotConf conf;
-        conf.trackPos              = true;       // Track position
-        conf.trackSpeed            = true;       // Track speed
-        conf.trackOrientation      = true;       // Track orientation
-        conf.displayTrace          = true;       // Show the trace
-        conf.displayTraceDur       = 60;         // Display duration in seconds
-        conf.displayTraceThickness = 2.0;        // Thicker line for visibility
-        conf.interval              = 1;          // Track every step
-        conf.writeFile             = true;       // Write track data to file
         
-        // Fix tracking directory and file path setup
+        // Create robot with slight random orientation for more interesting behavior
+        double randomAngle = (rand() % 100) / 100.0 * M_PI / 3;  // Random angle up to 60 degrees
+        vsg::dmat4 randomPose = vsg::rotate(randomAngle, vsg::dvec3(0.0, 0.0, 1.0)) * vsg::translate(0.0, 0.0, 0.0);
+        
+        auto agent = createVehicle(odeHandle, vsgHandle, global, randomPose, 4 /*FourWheeled*/);
+        
+        std::cout << "Created sensor-equipped robot with random starting orientation: " 
+                  << (randomAngle * 180.0 / M_PI) << " degrees" << std::endl;
+        // Enhanced tracking configuration for sensor-equipped robot
+        TrackRobotConf conf;
+        conf.trackPos              = true;       // Track position for navigation analysis
+        conf.trackSpeed            = true;       // Track speed for performance evaluation
+        conf.trackOrientation      = true;       // Track orientation for turning behavior
+        conf.displayTrace          = true;       // Visual trace for path analysis
+        conf.displayTraceDur       = 120;        // Longer duration for complex behaviors
+        conf.displayTraceThickness = 2.5;        // Thicker line for better visibility
+        conf.interval              = 1;          // Track every step for detailed analysis
+        conf.writeFile             = true;       // Write comprehensive data to file
+        
+        // Enhanced file naming for sensor-equipped robot
         std::string robotName = agent->getRobot()->getName();
         char dirName[256];
-        sprintf(dirName, "%s_track", robotName.c_str());
+        sprintf(dirName, "%s_sensor_equipped_track", robotName.c_str());
         createNewDir("./", dirName);
         
         // Use the full path for the tracking file
         char fullPath[512];
-        sprintf(fullPath, "./%s/track", dirName);
+        sprintf(fullPath, "./%s/sensor_robot_track", dirName);
         conf.scene = std::string(fullPath);
         
-        std::cout << "Creating tracking files in directory: " << dirName << std::endl;
-        std::cout << "Using scene path: " << conf.scene << std::endl;
+        std::cout << "Creating enhanced tracking for sensor-equipped robot in: " << dirName << std::endl;
+        std::cout << "Sensor robot tracking scene path: " << conf.scene << std::endl;
         
         agent->setTrackOptions(conf);
+
+        // Give the robot an initial forward push to start exploring
+        if (agent && agent->getRobot()) {
+            // The controller will take over, but this gives it an initial direction
+            std::cout << "Robot initialized with IR sensors enabled for obstacle detection" << std::endl;
+            std::cout << "Expected behaviors: navigation, obstacle avoidance, exploration" << std::endl;
+        }
 
 
         // Create robot
@@ -850,6 +924,9 @@ int main(int argc, char** argv)
         viewer->compile(resourceHints);
 
         viewer->start_point() = vsg::clock::now();
+        
+        // Frame counter for monitoring
+        int frameCount = 0;
 
         // rendering main loop
         while (viewer->advanceToNextFrame() && (numFrames < 0 || (numFrames--) > 0) && (viewer->getFrameStamp()->simulationTime < maxTime))
@@ -857,7 +934,14 @@ int main(int argc, char** argv)
             viewer->handleEvents();
 
             try {
+                frameCount++;
+                
                 //********************Simulation start********************************
+                // Display sensor info periodically
+                if (!global.agents.empty()) {
+                    displaySensorInfo(global.agents[0], frameCount);
+                }
+                
                 // First update all agents and let them control their robots
                 FOREACH(OdeAgentList, global.agents, i) {
                     (*i)->beforeStep(global);
@@ -891,6 +975,11 @@ int main(int argc, char** argv)
                     if (wall) wall->update();
                 }
                 
+                // Update obstacles
+                for (Box* obstacle : obstacles) {
+                    if (obstacle) obstacle->update();
+                }
+                
                 // Update and render the scene
                 viewer->update();
                 viewer->recordAndSubmit();
@@ -898,6 +987,17 @@ int main(int argc, char** argv)
 
             } catch (const std::exception& e) {
                 std::cerr << "Error in simulation loop: " << e.what() << std::endl;
+                std::cerr << "Frame: " << frameCount << ", Time: " << global.time << std::endl;
+                
+                // Try to recover by skipping this frame
+                frameCount++;
+                if (frameCount % 1000 == 0) {
+                    std::cout << "Simulation continuing... Frame " << frameCount 
+                              << ", Time: " << global.time << "s" << std::endl;
+                }
+                continue;
+            } catch (...) {
+                std::cerr << "Unknown error in simulation loop at frame " << frameCount << std::endl;
                 break;
             }
         }
@@ -912,6 +1012,12 @@ int main(int argc, char** argv)
             if (wall) delete wall;
         }
         boundaryWalls.clear();
+        
+        // Clean up obstacles
+        for (Box* obstacle : obstacles) {
+            if (obstacle) delete obstacle;
+        }
+        obstacles.clear();
 
         // Now that the robot and its joints are safely destroyed, 
         // you can close ODE and VSG:
