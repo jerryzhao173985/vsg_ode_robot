@@ -9,6 +9,9 @@
 using namespace std;
 
 namespace lpzrobots {
+  // Global counter for monitoring obstacle avoidance activation
+  static int g_avoidance_activations = 0;
+  static int g_total_motor_calls = 0;
 
   FourWheeled::FourWheeled(const OdeHandle& odeHandle, const VsgHandle& vsgHandle,
                            FourWheeledConf conf, const std::string& name)
@@ -54,16 +57,76 @@ namespace lpzrobots {
   }
 
   void FourWheeled::setMotorsIntern(const double* motors, int motornumber){
+    g_total_motor_calls++;
+    
+    // Create a copy of motor commands for potential modification
+    std::vector<double> modifiedMotors(motors, motors + motornumber);
+    bool avoidanceActivated = false;
+    
+    // Apply basic obstacle avoidance if IR sensors are enabled
+    if (conf.irFront || conf.irSide || conf.irBack) {
+      // Get current sensor values to check for obstacles
+      int totalSensors = getSensorNumber();
+      if (totalSensors > 4) {  // More than just wheel sensors
+        std::vector<double> sensorValues(totalSensors);
+        getSensors(sensorValues.data(), totalSensors);
+        
+        // IR sensors come after wheel sensors (indices 4+)
+        // Sensor layout: [wheel0, wheel1, wheel2, wheel3, IR sensors...]
+        double frontLeftIR = (totalSensors > 4) ? sensorValues[4] : 0.0;
+        double frontRightIR = (totalSensors > 5) ? sensorValues[5] : 0.0;
+        double rightSideIR = (totalSensors > 6) ? sensorValues[6] : 0.0;
+        double leftSideIR = (totalSensors > 7) ? sensorValues[7] : 0.0;
+        
+        // Apply obstacle avoidance reflexes
+        const double OBSTACLE_THRESHOLD = 0.7;  // Sensor value threshold for obstacle
+        const double AVOIDANCE_FACTOR = 0.3;    // How much to reduce motor power
+        
+        // Front obstacle avoidance
+        if (frontLeftIR > OBSTACLE_THRESHOLD || frontRightIR > OBSTACLE_THRESHOLD) {
+          // Reduce forward motion when front obstacle detected
+          for (int i = 0; i < motornumber; i++) {
+            if (modifiedMotors[i] > 0) {  // Only reduce positive (forward) motion
+              modifiedMotors[i] *= (1.0 - AVOIDANCE_FACTOR);
+              avoidanceActivated = true;
+            }
+          }
+        }
+        
+        // Side obstacle avoidance - create turning bias
+        if (rightSideIR > OBSTACLE_THRESHOLD && motornumber >= 2) {
+          // Turn left when right obstacle detected
+          modifiedMotors[1] *= (1.0 - AVOIDANCE_FACTOR);  // Reduce right wheel
+          avoidanceActivated = true;
+        }
+        if (leftSideIR > OBSTACLE_THRESHOLD && motornumber >= 2) {
+          // Turn right when left obstacle detected  
+          modifiedMotors[0] *= (1.0 - AVOIDANCE_FACTOR);  // Reduce left wheel
+          avoidanceActivated = true;
+        }
+        
+        if (avoidanceActivated) {
+          g_avoidance_activations++;
+        }
+      }
+    }
+    
+    // Apply the potentially modified motor commands
     if(conf.twoWheelMode){
       motor nimm4m[4];
-      nimm4m[0] = motors[0];
-      nimm4m[2] = motors[0];
-      nimm4m[1] = motors[1];
-      nimm4m[3] = motors[1];
+      nimm4m[0] = modifiedMotors[0];
+      nimm4m[2] = modifiedMotors[0];
+      nimm4m[1] = (motornumber > 1) ? modifiedMotors[1] : modifiedMotors[0];
+      nimm4m[3] = (motornumber > 1) ? modifiedMotors[1] : modifiedMotors[0];
       Nimm4::setMotorsIntern(nimm4m,4);
-    }else
-       Nimm4::setMotorsIntern(motors,motornumber);
+    }else {
+      Nimm4::setMotorsIntern(modifiedMotors.data(), motornumber);
+    }
+  }
 
+  // Function to get avoidance statistics
+  std::pair<int, int> FourWheeled::getAvoidanceStats() {
+    return std::make_pair(g_avoidance_activations, g_total_motor_calls);
   }
 
 

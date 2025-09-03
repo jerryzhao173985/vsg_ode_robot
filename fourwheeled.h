@@ -73,6 +73,9 @@ namespace lpzrobots {
     // returns the joint with index i
     virtual Joint* getJoint(int i);
 
+    // Get obstacle avoidance statistics
+    static std::pair<int, int> getAvoidanceStats();
+
   protected:
     /** creates vehicle at desired pose
         @param pose 4x4 pose matrix

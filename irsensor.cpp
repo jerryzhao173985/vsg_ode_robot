@@ -22,6 +22,15 @@ namespace lpzrobots {
     // Apply the IR sensor characteristic to convert distance to sensor value
     value = characteritic(measuredLength);
     
+    // Optional: Debug output for significant detections (uncomment for debugging)
+    // if (value > 0.5) {  // Strong detection
+    //     static int detection_count = 0;
+    //     if (detection_count++ % 100 == 0) {  // Throttle output
+    //         std::cout << "IR Sensor detection: distance=" << measuredLength 
+    //                   << ", sensor_value=" << value << std::endl;
+    //     }
+    // }
+    
     // Update ray visualization if drawing is enabled
     if (ray) {
       // Get the Ray pointer from the transform's child
